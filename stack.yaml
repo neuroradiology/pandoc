@@ -26,7 +26,7 @@ extra-deps:
 - doctemplates-0.8.1
 - pandoc-citeproc-0.17
 - git: https://github.com/jgm/commonmark-hs
-  commit: 73390976b8ec9efd6d496a58f77a7ced768298fd
+  commit: 96a20cba162d9a8379aa29705a3983ce2976f371
   subdirs:
     - commonmark
     - commonmark-extensions
