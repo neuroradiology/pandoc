@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!DOCTYPE article PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
-                  "http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+"http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd"
+[
+<!ENTITY GHC "GHC" >
+<!ENTITY let "LET" >
+<!ENTITY case "CASE" >
+]>
 <article>
   <articleinfo>
     <title>Pandoc Test Suite</title>
@@ -47,6 +52,12 @@
       <para>
         with no blank line
       </para>
+      <simplesect>
+        <title>Level 4</title>
+        <para>
+        An unnumbered section.
+        </para>
+      </simplesect>
     </sect3>
   </sect2>
   <sect2 id="level-2">
@@ -1557,5 +1568,29 @@ or here: &lt;http://example.com/&gt;
       </tbody>
     </tgroup>
   </informaltable>
+  <procedure><title>An Example Procedure</title>
+    <step>
+      <para>
+        A Step
+      </para>
+    </step>
+    <step>
+      <para>
+        Another Step
+      </para>
+      <substeps>
+        <step>
+          <para>
+            Substeps can be nested indefinitely deep.
+          </para>
+        </step>
+      </substeps>
+    </step>
+    <step>
+      <para>
+        A Final Step
+      </para>
+    </step>
+  </procedure>
 </sect1>
 </article>

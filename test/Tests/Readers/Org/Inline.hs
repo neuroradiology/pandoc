@@ -1,8 +1,7 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {- |
    Module      : Tests.Readers.Org.Inline
-   Copyright   : © 2014-2020 Albert Krewinkel
+   Copyright   : © 2014-2021 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <albert@zeitkraut.de>
@@ -13,13 +12,11 @@ Tests parsing of org inlines.
 -}
 module Tests.Readers.Org.Inline (tests) where
 
-import Prelude
 import Data.List (intersperse)
 import Test.Tasty (TestTree, testGroup)
 import Tests.Helpers ((=?>))
 import Tests.Readers.Org.Shared ((=:), spcSep)
 import Text.Pandoc.Builder
-import Text.Pandoc.Shared (underlineSpan)
 import qualified Data.Text as T
 import qualified Tests.Readers.Org.Inline.Citation as Citation
 import qualified Tests.Readers.Org.Inline.Note as Note
@@ -49,7 +46,7 @@ tests =
 
   , "Underline" =:
       "_underline_" =?>
-      para (underlineSpan "underline")
+      para (underline "underline")
 
   , "Strikeout" =:
       "+Kill Bill+" =?>
@@ -57,7 +54,7 @@ tests =
 
   , "Verbatim" =:
       "=Robot.rock()=" =?>
-      para (code "Robot.rock()")
+      para (codeWith ("", ["verbatim"], []) "Robot.rock()")
 
   , "Code" =:
       "~word for word~" =?>
@@ -191,7 +188,7 @@ tests =
                   ])
   , "Verbatim text can contain equal signes (=)" =:
       "=is_subst = True=" =?>
-      para (code "is_subst = True")
+      para (codeWith ("", ["verbatim"], []) "is_subst = True")
 
   , testGroup "Images"
     [ "Image" =:
@@ -211,10 +208,14 @@ tests =
              <> image "sunset.jpg" "" "")
 
     , "Image with html attributes" =:
-      T.unlines [ "#+ATTR_HTML: :width 50%"
+      T.unlines [ "#+attr_html: :width 50%"
                 , "[[file:guinea-pig.gif]]"
                 ] =?>
       para (imageWith ("", [], [("width", "50%")]) "guinea-pig.gif" "" "")
+
+    , "Uppercase extension" =:
+      "[[file:test.PNG]]" =?>
+      para (image "test.PNG" "" "")
     ]
 
   , "Explicit link" =:
@@ -366,7 +367,7 @@ tests =
                 ] =?>
       para (emph "Hello, World")
 
-  , "Macro repeting its argument" =:
+  , "Macro duplicating its argument" =:
       T.unlines [ "#+MACRO: HELLO $1$1"
                 , "{{{HELLO(moin)}}}"
                 ] =?>

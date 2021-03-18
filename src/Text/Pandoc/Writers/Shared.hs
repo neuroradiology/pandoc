@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {- |
    Module      : Text.Pandoc.Writers.Shared
-   Copyright   : Copyright (C) 2013-2020 John MacFarlane
+   Copyright   : Copyright (C) 2013-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -34,6 +34,7 @@ module Text.Pandoc.Writers.Shared (
                      , toSuperscript
                      , toTableOfContents
                      , endsWithPlain
+                     , toLegacyTable
                      )
 where
 import Safe (lastMay)
@@ -50,7 +51,7 @@ import qualified Text.Pandoc.Builder as Builder
 import Text.Pandoc.Definition
 import Text.Pandoc.Options
 import Text.DocLayout
-import Text.Pandoc.Shared (stringify, makeSections, deNote, deLink)
+import Text.Pandoc.Shared (stringify, makeSections, deNote, deLink, blocksToInlines)
 import Text.Pandoc.Walk (walk)
 import qualified Text.Pandoc.UTF8 as UTF8
 import Text.Pandoc.XML (escapeStringForXML)
@@ -77,8 +78,8 @@ metaToContext opts blockWriter inlineWriter meta =
 -- | Like 'metaToContext, but does not include variables and is
 -- not sensitive to 'writerTemplate'.
 metaToContext' :: (Monad m, TemplateTarget a)
-           => ([Block] -> m (Doc a))
-           -> ([Inline] -> m (Doc a))
+           => ([Block] -> m (Doc a))     -- ^ block writer
+           -> ([Inline] -> m (Doc a))    -- ^ inline writer
            -> Meta
            -> m (Context a)
 metaToContext' blockWriter inlineWriter (Meta metamap) =
@@ -97,17 +98,18 @@ addVariablesToContext opts c1 =
                                mempty
    jsonrep = UTF8.toText $ BL.toStrict $ encode $ toJSON c1
 
+-- | Converts a 'MetaValue' into a doctemplate 'Val', using the given
+-- converter functions.
 metaValueToVal :: (Monad m, TemplateTarget a)
-               => ([Block] -> m (Doc a))
-               -> ([Inline] -> m (Doc a))
+               => ([Block] -> m (Doc a))    -- ^ block writer
+               -> ([Inline] -> m (Doc a))   -- ^ inline writer
                -> MetaValue
                -> m (Val a)
 metaValueToVal blockWriter inlineWriter (MetaMap metamap) =
   MapVal . Context <$> mapM (metaValueToVal blockWriter inlineWriter) metamap
 metaValueToVal blockWriter inlineWriter (MetaList xs) = ListVal <$>
   mapM (metaValueToVal blockWriter inlineWriter) xs
-metaValueToVal _ _ (MetaBool True) = return $ SimpleVal "true"
-metaValueToVal _ _ (MetaBool False) = return NullVal
+metaValueToVal _ _ (MetaBool b) = return $ BoolVal b
 metaValueToVal _ inlineWriter (MetaString s) =
    SimpleVal <$> inlineWriter (Builder.toList (Builder.text s))
 metaValueToVal blockWriter _ (MetaBlocks bs) = SimpleVal <$> blockWriter bs
@@ -144,7 +146,7 @@ defField field val (Context m) =
   where
     f _newval oldval = oldval
 
--- Produce an HTML tag with the given pandoc attributes.
+-- | Produce an HTML tag with the given pandoc attributes.
 tagWithAttrs :: HasChars a => T.Text -> Attr -> Doc a
 tagWithAttrs tag (ident,classes,kvs) = hsep
   ["<" <> text (T.unpack tag)
@@ -158,18 +160,21 @@ tagWithAttrs tag (ident,classes,kvs) = hsep
                 doubleQuotes (text $ T.unpack (escapeStringForXML v))) kvs)
   ] <> ">"
 
+-- | Returns 'True' iff the argument is an inline 'Math' element of type
+-- 'DisplayMath'.
 isDisplayMath :: Inline -> Bool
 isDisplayMath (Math DisplayMath _)          = True
 isDisplayMath (Span _ [Math DisplayMath _]) = True
 isDisplayMath _                             = False
 
+-- | Remove leading and trailing 'Space' and 'SoftBreak' elements.
 stripLeadingTrailingSpace :: [Inline] -> [Inline]
 stripLeadingTrailingSpace = go . reverse . go . reverse
   where go (Space:xs)     = xs
         go (SoftBreak:xs) = xs
         go xs             = xs
 
--- Put display math in its own block (for ODT/DOCX).
+-- | Put display math in its own block (for ODT/DOCX).
 fixDisplayMath :: Block -> Block
 fixDisplayMath (Plain lst)
   | any isDisplayMath lst && not (all isDisplayMath lst) =
@@ -191,6 +196,8 @@ fixDisplayMath (Para lst)
                          not (isDisplayMath x || isDisplayMath y)) lst
 fixDisplayMath x = x
 
+-- | Converts a Unicode character into the ASCII sequence used to
+-- represent the character in "smart" Markdown.
 unsmartify :: WriterOptions -> T.Text -> T.Text
 unsmartify opts = T.concatMap $ \c -> case c of
   '\8217' -> "'"
@@ -365,6 +372,8 @@ lookupMetaString key meta =
          Just (MetaBool b)      -> T.pack (show b)
          _                      -> ""
 
+-- | Tries to convert a character into a unicode superscript version of
+-- the character.
 toSuperscript :: Char -> Maybe Char
 toSuperscript '1' = Just '\x00B9'
 toSuperscript '2' = Just '\x00B2'
@@ -380,6 +389,8 @@ toSuperscript c
   | isSpace c = Just c
   | otherwise = Nothing
 
+-- | Tries to convert a character into a unicode subscript version of
+-- the character.
 toSubscript :: Char -> Maybe Char
 toSubscript '+' = Just '\x208A'
 toSubscript '-' = Just '\x208B'
@@ -401,7 +412,8 @@ toTableOfContents opts bs =
              $ map (sectionToListItem opts)
              $ makeSections (writerNumberSections opts) Nothing bs
 
--- | Converts an Element to a list item for a table of contents,
+-- | Converts a section Div to a list item for a table of contents;
+-- returns an empty list if the given block is not a section Div.
 sectionToListItem :: WriterOptions -> Block -> [Block]
 sectionToListItem opts (Div (ident,_,_)
                          (Header lev (_,classes,kvs) ils : subsecs))
@@ -421,8 +433,74 @@ sectionToListItem opts (Div (ident,_,_)
    listContents = filter (not . null) $ map (sectionToListItem opts) subsecs
 sectionToListItem _ _ = []
 
+-- | Returns 'True' iff the list of blocks has a @'Plain'@ as its last
+-- element.
 endsWithPlain :: [Block] -> Bool
 endsWithPlain xs =
   case lastMay xs of
     Just Plain{} -> True
     _            -> False
+
+-- | Convert the relevant components of a new-style table (with block
+-- caption, row headers, row and column spans, and so on) to those of
+-- an old-style table (inline caption, table head with one row, no
+-- foot, and so on). Cells with a 'RowSpan' and 'ColSpan' of @(h, w)@
+-- will be cut up into @h * w@ cells of dimension @(1, 1)@, with the
+-- content placed in the upper-left corner.
+toLegacyTable :: Caption
+              -> [ColSpec]
+              -> TableHead
+              -> [TableBody]
+              -> TableFoot
+              -> ([Inline], [Alignment], [Double], [[Block]], [[[Block]]])
+toLegacyTable (Caption _ cbody) specs thead tbodies tfoot
+  = (cbody', aligns, widths, th', tb')
+  where
+    numcols = length specs
+    (aligns, mwidths) = unzip specs
+    fromWidth (ColWidth w) | w > 0 = w
+    fromWidth _                    = 0
+    widths = map fromWidth mwidths
+    unRow (Row _ x) = x
+    unBody (TableBody _ _ hd bd) = hd <> bd
+    unBodies = concatMap unBody
+
+    TableHead _ th = Builder.normalizeTableHead numcols thead
+    tb = map (Builder.normalizeTableBody numcols) tbodies
+    TableFoot _ tf = Builder.normalizeTableFoot numcols tfoot
+
+    cbody' = blocksToInlines cbody
+
+    (th', tb') = case th of
+      r:rs -> let (pendingPieces, r') = placeCutCells [] $ unRow r
+                  rs' = cutRows pendingPieces $ rs <> unBodies tb <> tf
+              in (r', rs')
+      []    -> ([], cutRows [] $ unBodies tb <> tf)
+
+    -- Adapted from placeRowSection in Builders. There is probably a
+    -- more abstract foldRowSection that unifies them both.
+    placeCutCells pendingPieces cells
+      -- If there are any pending pieces for a column, add
+      -- them. Pending pieces have preference over cells due to grid
+      -- layout rules.
+      | (p:ps):pendingPieces' <- pendingPieces
+      = let (pendingPieces'', rowPieces) = placeCutCells pendingPieces' cells
+        in (ps : pendingPieces'', p : rowPieces)
+      -- Otherwise cut up a cell on the row and deal with its pieces.
+      | c:cells' <- cells
+      = let (h, w, cBody) = getComponents c
+            cRowPieces = cBody : replicate (w - 1) mempty
+            cPendingPieces = replicate w $ replicate (h - 1) mempty
+            pendingPieces' = dropWhile null pendingPieces
+            (pendingPieces'', rowPieces) = placeCutCells pendingPieces' cells'
+        in (cPendingPieces <> pendingPieces'', cRowPieces <> rowPieces)
+      | otherwise = ([], [])
+
+    cutRows pendingPieces (r:rs)
+      = let (pendingPieces', r') = placeCutCells pendingPieces $ unRow r
+            rs' = cutRows pendingPieces' rs
+        in r' : rs'
+    cutRows _ [] = []
+
+    getComponents (Cell _ _ (RowSpan h) (ColSpan w) body)
+      = (h, w, body)

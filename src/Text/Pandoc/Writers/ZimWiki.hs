@@ -2,7 +2,7 @@
 {-# LANGUAGE ViewPatterns      #-}
 {- |
    Module      : Text.Pandoc.Writers.ZimWiki
-   Copyright   : © 2008-2020 John MacFarlane,
+   Copyright   : © 2008-2021 John MacFarlane,
                    2017-2019 Alex Ivkin
    License     : GNU GPL, version 2 or above
 
@@ -34,7 +34,7 @@ import Text.Pandoc.Options (WrapOption (..),
                           writerWrapText))
 import Text.Pandoc.Shared (escapeURI, isURI, linesToPara, removeFormatting, trimr)
 import Text.Pandoc.Templates (renderTemplate)
-import Text.Pandoc.Writers.Shared (defField, metaToContext)
+import Text.Pandoc.Writers.Shared (defField, metaToContext, toLegacyTable)
 
 data WriterState = WriterState {
     stIndent  :: Text,           -- Indent after the marker at the beginning of list items
@@ -132,7 +132,8 @@ blockToZimWiki opts (BlockQuote blocks) = do
   contents <- blockListToZimWiki opts blocks
   return $ T.unlines $ map ("> " <>) $ T.lines contents
 
-blockToZimWiki opts (Table capt aligns _ headers rows) = do
+blockToZimWiki opts (Table _ blkCapt specs thead tbody tfoot) = do
+  let (capt, aligns, _, headers, rows) = toLegacyTable blkCapt specs thead tbody tfoot
   captionDoc <- if null capt
                    then return ""
                    else do
@@ -271,6 +272,10 @@ inlineToZimWiki :: PandocMonad m
 inlineToZimWiki opts (Emph lst) = do
   contents <- inlineListToZimWiki opts lst
   return $ "//" <> contents <> "//"
+
+inlineToZimWiki opts (Underline lst) = do
+  contents <- inlineListToZimWiki opts lst
+  return $ "__" <> contents <> "__"
 
 inlineToZimWiki opts (Strong lst) = do
   contents <- inlineListToZimWiki opts lst

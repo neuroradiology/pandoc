@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {- |
    Module      : Text.Pandoc.Readers.Org
-   Copyright   : © 2019-2020 Albert Krewinkel
+   Copyright   : © 2019-2021 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -16,7 +16,7 @@ import Data.Text (Text, append, pack, singleton, unpack)
 import Text.HTML.TagSoup.Entity (lookupEntity)
 import Text.Jira.Parser (parse)
 import Text.Pandoc.Class.PandocMonad (PandocMonad (..))
-import Text.Pandoc.Builder
+import Text.Pandoc.Builder hiding (cell)
 import Text.Pandoc.Error (PandocError (PandocParseError))
 import Text.Pandoc.Options (ReaderOptions)
 import Text.Pandoc.Shared (stringify)
@@ -71,10 +71,10 @@ toPandocCodeBlocks langMay params txt =
                   Nothing                   -> []
   in codeBlockWith ("", classes, map paramToPair params) txt
 
--- | Create a pandoc @'Div'@
+-- | Create a pandoc @'Div'@ from a panel.
 toPandocDiv :: [Jira.Parameter] -> [Jira.Block] -> Blocks
 toPandocDiv params =
-  divWith ("", [], map paramToPair params) . foldMap jiraToPandocBlocks
+  divWith ("", ["panel"], map paramToPair params) . foldMap jiraToPandocBlocks
 
 paramToPair :: Jira.Parameter -> (Text, Text)
 paramToPair (Jira.Parameter key value) = (key, value)
@@ -141,7 +141,7 @@ jiraToPandocInlines = \case
 
     fromStyle = \case
       Jira.Emphasis    -> emph
-      Jira.Insert      -> spanWith ("", ["underline"], [])
+      Jira.Insert      -> underline
       Jira.Strikeout   -> strikeout
       Jira.Strong      -> strong
       Jira.Subscript   -> subscript

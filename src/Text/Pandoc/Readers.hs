@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {- |
    Module      : Text.Pandoc.Readers
-   Copyright   : Copyright (C) 2006-2020 John MacFarlane
+   Copyright   : Copyright (C) 2006-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -51,6 +51,9 @@ module Text.Pandoc.Readers
   , readFB2
   , readIpynb
   , readCSV
+  , readCslJson
+  , readBibTeX
+  , readBibLaTeX
   -- * Miscellaneous
   , getReader
   , getDefaultExtensions
@@ -95,6 +98,8 @@ import Text.Pandoc.Readers.Txt2Tags
 import Text.Pandoc.Readers.Vimwiki
 import Text.Pandoc.Readers.Man
 import Text.Pandoc.Readers.CSV
+import Text.Pandoc.Readers.CslJson
+import Text.Pandoc.Readers.BibTeX
 import qualified Text.Pandoc.UTF8 as UTF8
 import Text.Parsec.Error
 
@@ -111,6 +116,7 @@ readers = [ ("native"       , TextReader readNative)
            ,("markdown_github" , TextReader readMarkdown)
            ,("markdown_mmd",  TextReader readMarkdown)
            ,("commonmark"   , TextReader readCommonMark)
+           ,("commonmark_x" , TextReader readCommonMark)
            ,("creole"       , TextReader readCreole)
            ,("dokuwiki"     , TextReader readDokuWiki)
            ,("gfm"          , TextReader readCommonMark)
@@ -137,6 +143,9 @@ readers = [ ("native"       , TextReader readNative)
            ,("fb2"          , TextReader readFB2)
            ,("ipynb"        , TextReader readIpynb)
            ,("csv"          , TextReader readCSV)
+           ,("csljson"      , TextReader readCslJson)
+           ,("bibtex"       , TextReader readBibTeX)
+           ,("biblatex"     , TextReader readBibLaTeX)
            ]
 
 -- | Retrieve reader, extensions based on formatSpec (format+extensions).

@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {- |
    Module      : Tests.Readers.Docx
@@ -13,7 +12,6 @@ Tests for the word docx reader.
 -}
 module Tests.Readers.Docx (tests) where
 
-import Prelude
 import Codec.Archive.Zip
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as B
@@ -33,7 +31,7 @@ import Text.Pandoc.UTF8 as UTF8
 -- tests. Since we do our own normalization, we want to make sure
 -- we're doing it right.
 
-data NoNormPandoc = NoNormPandoc {unNoNorm :: Pandoc}
+newtype NoNormPandoc = NoNormPandoc {unNoNorm :: Pandoc}
                  deriving Show
 
 noNorm :: Pandoc -> NoNormPandoc
@@ -405,6 +403,10 @@ tests = [ testGroup "document"
             "paragraph insertion/deletion (all)"
             "docx/paragraph_insertion_deletion.docx"
             "docx/paragraph_insertion_deletion_all.native"
+          , testCompareWithOpts def{readerTrackChanges=AllChanges}
+            "paragraph insertion/deletion (all)"
+            "docx/track_changes_scrubbed_metadata.docx"
+            "docx/track_changes_scrubbed_metadata.native"
           , testForWarningsWithOpts def{readerTrackChanges=AcceptChanges}
             "comment warnings (accept -- no warnings)"
             "docx/comments_warning.docx"

@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {- |
    Module      : Text.Pandoc.Writers.Texinfo
-   Copyright   : Copyright (C) 2008-2020 John MacFarlane
+   Copyright   : Copyright (C) 2008-2021 John MacFarlane
                                2012 Peter Wang
    License     : GNU GPL, version 2 or above
 
@@ -15,7 +15,7 @@ module Text.Pandoc.Writers.Texinfo ( writeTexinfo ) where
 import Control.Monad.Except (throwError)
 import Control.Monad.State.Strict
 import Data.Char (chr, ord)
-import Data.List (maximumBy, transpose)
+import Data.List (maximumBy, transpose, foldl')
 import Data.Ord (comparing)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -228,7 +228,8 @@ blockToTexinfo (Header level (ident,_,_) lst)
       seccmd 4 = return "@subsubsection "
       seccmd _ = throwError $ PandocSomeError "illegal seccmd level"
 
-blockToTexinfo (Table caption aligns widths heads rows) = do
+blockToTexinfo (Table _ blkCapt specs thead tbody tfoot) = do
+  let (caption, aligns, widths, heads, rows) = toLegacyTable blkCapt specs thead tbody tfoot
   headers <- if all null heads
                 then return empty
                 else tableHeadToTexinfo aligns heads
@@ -270,7 +271,7 @@ tableAnyRowToTexinfo :: PandocMonad m
                      -> [[Block]]
                      -> TI m (Doc Text)
 tableAnyRowToTexinfo itemtype aligns cols =
-  (literal itemtype $$) . foldl (\row item -> row $$
+  (literal itemtype $$) . foldl' (\row item -> row $$
   (if isEmpty row then empty else text " @tab ") <> item) empty <$> zipWithM alignedBlock aligns cols
 
 alignedBlock :: PandocMonad m
@@ -390,6 +391,10 @@ inlineToTexinfo (Span _ lst) =
 
 inlineToTexinfo (Emph lst) =
   inCmd "emph" <$> inlineListToTexinfo lst
+
+-- Underline isn't supported, fall back to Emph
+inlineToTexinfo (Underline lst) =
+  inlineToTexinfo (Emph lst)
 
 inlineToTexinfo (Strong lst) =
   inCmd "strong" <$> inlineListToTexinfo lst

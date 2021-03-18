@@ -1,11 +1,13 @@
 # Contributors
 
 - Anabra
+- Aner Lucero
 - Arata Mizuki
 - Arfon Smith
 - Aaron Wolen
 - Albert Krewinkel
 - Alex Ivkin
+- Alex Toldaiev
 - Alex Vong
 - Alexander Kondratskiy
 - Alexander Krotov
@@ -17,6 +19,7 @@
 - Anders Waldenborg
 - Andreas Lööw
 - Andrew Dunning
+- Andy Morris
 - Antoine Latter
 - Antonio Terceiro
 - Arata Mizuki
@@ -31,6 +34,7 @@
 - Beni Cherniavsky-Paskin
 - Benoit Schweblin
 - Bjorn Buckwalter
+- Blake Eryx
 - Bradley Kuhn
 - Brent Yorgey
 - Brian Leung
@@ -39,6 +43,8 @@
 - Caleb Mclennan
 - Calvin Beck
 - Carlos Sosa
+- Cécile Chemin
+- Cédric Couralet
 - Chris Black
 - Christian Conkle
 - Christian Despres
@@ -56,14 +62,19 @@
 - Daniele D'Orazio
 - David A Roberts
 - David Lazar
+- David Martschenko
 - David Röthlisberger
 - Denis Laxalde
 - Denis Maier
 - Derek Chen-Becker
+- Diego Balseiro
+- Dimitri Sabadie
 - Dmitry Pogodin
+- Dmitry Volodin
 - Douglas Calvert
 - Eigil Rischel
 - Emanuel Evans
+- Emerson Harkin
 - Emily Eisenberg
 - Eric Kow
 - Eric Seidel
@@ -97,6 +108,7 @@
 - Hubert Plociniczak
 - Ian Max Andolina
 - Igor Khorlo
+- Igor Pashev
 - Ilya V. Portnov
 - Ivan Trubach
 - Ivo Clarysse
@@ -104,11 +116,13 @@
 - J. B. Rainsberger
 - J. Lewis Muir
 - Jaime Marquínez Ferrándiz
+- Jake Zimmerman
 - Jakob Voß
 - James Aspnes
 - Jamie F. Olson
 - Jan Larres
 - Jan Schulz
+- Jan Tojnar
 - Jan-Otto Kröpke
 - Jason Ronallo
 - Jeff Arnold
@@ -116,6 +130,7 @@
 - Jens Getreu
 - Jens Petersen
 - Jeroen de Haas
+- Jerry Sky
 - Jesse Rosenthal
 - Joe Hermaszewski
 - Joe Hillenbrand
@@ -131,6 +146,7 @@
 - Josef Svenningsson
 - Joseph C. Sible
 - Julien Cretel
+- Juliette Fourcot
 - Juliusz Gonera
 - Justin Bogner
 - Jérémy Bobbio
@@ -143,7 +159,13 @@
 - Krystof Beuermann
 - Herwig Stuetz
 - Lars-Dominik Braun
+- Laurent P. René de Cotret
 - Leif Metcalf
+- Leonard Rosenthol
+- Lila
+- Loïc Grobol
+- Lorenzo
+- Lucas Escot
 - Luke Plant
 - Marc Schreiber
 - Mark Szepieniec
@@ -153,6 +175,7 @@
 - Matej Kollar
 - Mathias Schenner
 - Mathias Walter
+- Mathieu Boespflug
 - Mathieu Duponchelle
 - Matthew Doty
 - Matthew Eddey
@@ -164,7 +187,9 @@
 - Merijn Verstraaten
 - Michael Beaumont
 - Michael Chladek
+- Michael Hoffmann
 - Michael Peyton Jones
+- Michael Reed
 - Michael Snoyman
 - Michael Thompson
 - Mike Tzou
@@ -173,10 +198,12 @@
 - Nathan Gass
 - Neil Mayhew
 - Nick Bart
+- Nick Berendsen
 - Nick Fleisher
 - Nicolas Kaiser
 - Nikolay Yakimov
 - Nils Carlson
+- Nixon Enraght-Moony
 - Nokome Bentley
 - Ole Martin Ruud
 - Oliver Matthews
@@ -202,6 +229,7 @@
 - Recai Oktaş
 - Roland Hieber
 - RyanGlScott
+- Salim B
 - Sascha Wilde
 - Scott Morrison
 - Sebastian Talmon
@@ -210,6 +238,7 @@
 - Shahbaz Youssefi
 - Shaun Attfield
 - Shim Myeongseob
+- Shin Sang-jae
 - Sidarth Kapur
 - Sidharth Kapur
 - Simon Hengel
@@ -225,15 +254,18 @@
 - Tiziano Müller
 - Todd Sifleet
 - Tom Leese
+- Tristan de Cacqueray
 - Tristan Stenner
 - Uli Köhler
 - Urs Liska
 - Václav Zeman
 - Václav Haisman
+- Vaibhav Sagar
 - Vanessa McHale
 - Vasily Alferov
 - Viktor Kronvall
 - Vincent
+- Vlad Hanciuta
 - Wandmalfarbe
 - Waldir Pimenta
 - Wikiwide
@@ -243,13 +275,19 @@
 - Yoan Blanc
 - Yuchen Pei
 - Zihang Chen
+- a-vrma
+- andrebauer
+- argent0
 - blmage
 - bucklereed
 - bumper314
 - chinapedia
+- cholonam
 - csforste
+- dbecher-ito
 - d-dorazio
 - ebiim
+- favonia
 - infinity0x
 - jeongminkim-islab
 - kaizshang91
@@ -267,7 +305,12 @@
 - rski
 - shreevatsa.public
 - takahashim
+- taotieren
+- TEC
 - tgkokk
+- the-solipsist
+- timo-a
 - thsutton
 - vijayphoenix
 - wiefling
+- wuffi

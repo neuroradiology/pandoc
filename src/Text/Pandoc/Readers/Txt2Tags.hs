@@ -31,8 +31,7 @@ import Data.Time (defaultTimeLocale)
 import Text.Pandoc.Definition
 import Text.Pandoc.Options
 import Text.Pandoc.Parsing hiding (space, spaces, uri)
-import Text.Pandoc.Shared (compactify, compactifyDL, crFilter, escapeURI,
-                           underlineSpan)
+import Text.Pandoc.Shared (compactify, compactifyDL, crFilter, escapeURI)
 
 type T2T = ParserT Text ParserState (Reader T2TMeta)
 
@@ -267,9 +266,13 @@ table = try $ do
   let size = maximum (map length rows')
   let rowsPadded = map (pad size) rows'
   let headerPadded = if null tableHeader then mempty else pad size tableHeader
-  return $ B.table mempty
-                    (zip aligns (replicate ncolumns 0.0))
-                      headerPadded rowsPadded
+  let toRow = Row nullAttr . map B.simpleCell
+      toHeaderRow l = [toRow l | not (null l)]
+  return $ B.table B.emptyCaption
+                    (zip aligns (replicate ncolumns ColWidthDefault))
+                      (TableHead nullAttr $ toHeaderRow headerPadded)
+                      [TableBody nullAttr 0 [] $ map toRow rowsPadded]
+                      (TableFoot nullAttr [])
 
 pad :: (Monoid a) => Int -> [a] -> [a]
 pad n xs = xs ++ replicate (n - length xs) mempty
@@ -374,7 +377,7 @@ bold :: T2T Inlines
 bold = inlineMarkup inline B.strong '*' B.str
 
 underline :: T2T Inlines
-underline = inlineMarkup inline underlineSpan '_' B.str
+underline = inlineMarkup inline B.underline '_' B.str
 
 strike :: T2T Inlines
 strike = inlineMarkup inline B.strikeout '-' B.str
@@ -461,7 +464,7 @@ macro = try $ do
   name <- string "%%" *> oneOfStringsCI (map fst commands)
   optional (try $ enclosed (char '(') (char ')') anyChar)
   lookAhead (spaceChar <|> oneOf specialChars <|> newline)
-  maybe (return mempty) (\f -> B.str <$> asks f) (lookup name commands)
+  maybe (return mempty) (\f -> asks (B.str . f)) (lookup name commands)
   where
     commands = [ ("date", date), ("mtime", mtime)
                , ("infile", T.pack . infile), ("outfile", T.pack . outfile)]
@@ -561,7 +564,7 @@ getTarget = do
               _                               -> "html"
 
 atStart :: T2T ()
-atStart = (sourceColumn <$> getPosition) >>= guard . (== 1)
+atStart = getPosition >>= guard . (== 1) . sourceColumn
 
 ignoreSpacesCap :: T2T Text -> T2T Text
 ignoreSpacesCap p = T.toLower <$> (spaces *> p <* spaces)

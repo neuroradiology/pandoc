@@ -4,7 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {- |
    Module      : Text.Pandoc.Templates
-   Copyright   : Copyright (C) 2009-2020 John MacFarlane
+   Copyright   : Copyright (C) 2009-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -80,6 +80,7 @@ getDefaultTemplate writer = do
   let format = T.takeWhile (`notElem` ("+-" :: String)) writer  -- strip off extensions
   case format of
        "native"  -> return ""
+       "csljson" -> return ""
        "json"    -> return ""
        "docx"    -> return ""
        "fb2"     -> return ""
@@ -97,6 +98,7 @@ getDefaultTemplate writer = do
        "markdown_mmd"      -> getDefaultTemplate "markdown"
        "markdown_phpextra" -> getDefaultTemplate "markdown"
        "gfm"               -> getDefaultTemplate "commonmark"
+       "commonmark_x"      -> getDefaultTemplate "commonmark"
        _        -> do
          let fname = "templates" </> "default" <.> T.unpack format
          UTF8.toText <$> readDataFile fname

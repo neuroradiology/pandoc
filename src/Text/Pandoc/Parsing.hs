@@ -9,7 +9,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {- |
    Module      : Text.Pandoc.Parsing
-   Copyright   : Copyright (C) 2006-2020 John MacFarlane
+   Copyright   : Copyright (C) 2006-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -179,15 +179,18 @@ module Text.Pandoc.Parsing ( take1WhileP,
                              setSourceColumn,
                              setSourceLine,
                              incSourceColumn,
+                             incSourceLine,
                              newPos,
+                             initialPos,
                              Line,
-                             Column
+                             Column,
+                             ParseError
                              )
 where
 
 import Control.Monad.Identity
 import Control.Monad.Reader
-import Data.Char (chr, isAlphaNum, isAscii, isAsciiUpper,
+import Data.Char (chr, isAlphaNum, isAscii, isAsciiUpper, isAsciiLower,
                   isPunctuation, isSpace, ord, toLower, toUpper)
 import Data.Default
 import Data.Functor (($>))
@@ -440,7 +443,14 @@ spaceChar = satisfy $ \c -> c == ' ' || c == '\t'
 
 -- | Parses a nonspace, nonnewline character.
 nonspaceChar :: Stream s m Char => ParserT s st m Char
-nonspaceChar = noneOf ['\t', '\n', ' ', '\r']
+nonspaceChar = satisfy (not . isSpaceChar)
+
+isSpaceChar :: Char -> Bool
+isSpaceChar ' '  = True
+isSpaceChar '\t' = True
+isSpaceChar '\n' = True
+isSpaceChar '\r' = True
+isSpaceChar _    = False
 
 -- | Skips zero or more spaces or tabs.
 skipSpaces :: Stream s m Char => ParserT s st m ()
@@ -574,15 +584,15 @@ romanNumeral upperCase = do
     let fivehundred = rchar 'D'
     let thousand    = rchar 'M'
     lookAhead $ choice [one, five, ten, fifty, hundred, fivehundred, thousand]
-    thousands <- ((1000 *) . length) <$> many thousand
+    thousands <- (1000 *) . length <$> many thousand
     ninehundreds <- option 0 $ try $ hundred >> thousand >> return 900
     fivehundreds <- option 0 $ 500 <$ fivehundred
     fourhundreds <- option 0 $ try $ hundred >> fivehundred >> return 400
-    hundreds <- ((100 *) . length) <$> many hundred
+    hundreds <- (100 *) . length <$> many hundred
     nineties <- option 0 $ try $ ten >> hundred >> return 90
     fifties <- option 0 (50 <$ fifty)
     forties <- option 0 $ try $ ten >> fifty >> return 40
-    tens <- ((10 *) . length) <$> many ten
+    tens <- (10 *) . length <$> many ten
     nines <- option 0 $ try $ one >> ten >> return 9
     fives <- option 0 (5 <$ five)
     fours <- option 0 $ try $ one >> five >> return 4
@@ -631,7 +641,7 @@ uri = try $ do
   scheme <- uriScheme
   char ':'
   -- Avoid parsing e.g. "**Notes:**" as a raw URI:
-  notFollowedBy (oneOf "*_]")
+  notFollowedBy $ satisfy (\c -> c == '*' || c == '_' || c == ']')
   -- We allow sentence punctuation except at the end, since
   -- we don't want the trailing '.' in 'http://google.com.' We want to allow
   -- http://en.wikipedia.org/wiki/State_of_emergency_(disambiguation)
@@ -645,7 +655,20 @@ uri = try $ do
   let uri' = scheme <> ":" <> fromEntities str'
   return (uri', escapeURI uri')
   where
-    wordChar = alphaNum <|> oneOf "#$%+/@\\_-&="
+    isWordChar '#' = True
+    isWordChar '$' = True
+    isWordChar '%' = True
+    isWordChar '+' = True
+    isWordChar '/' = True
+    isWordChar '@' = True
+    isWordChar '\\' = True
+    isWordChar '_' = True
+    isWordChar '-' = True
+    isWordChar '&' = True
+    isWordChar '=' = True
+    isWordChar c   = isAlphaNum c
+
+    wordChar = satisfy isWordChar
     percentEscaped = try $ (:) <$> char '%' <*> many1 hexDigit
     entity = try $ pure <$> characterReference
     punct = try $ many1 (char ',') <|> fmap pure (satisfy (\c -> not (isSpace c) && c /= '<' && c /= '>'))
@@ -660,7 +683,9 @@ mathInlineWith :: Stream s m Char  => Text -> Text -> ParserT s st m Text
 mathInlineWith op cl = try $ do
   textStr op
   when (op == "$") $ notFollowedBy space
-  words' <- many1Till (countChar 1 (noneOf " \t\n\\")
+  words' <- many1Till (
+                       (T.singleton <$>
+                          satisfy (\c -> not (isSpaceChar c || c == '\\')))
                    <|> (char '\\' >>
                            -- This next clause is needed because \text{..} can
                            -- contain $, \(\), etc.
@@ -668,7 +693,7 @@ mathInlineWith op cl = try $ do
                                  (("\\text" <>) <$> inBalancedBraces 0 ""))
                             <|>  (\c -> T.pack ['\\',c]) <$> anyChar))
                    <|> do (blankline <* notFollowedBy' blankline) <|>
-                             (oneOf " \t" <* skipMany (oneOf " \t"))
+                             (spaceChar <* skipMany spaceChar)
                           notFollowedBy (char '$')
                           return " "
                     ) (try $ textStr cl)
@@ -698,7 +723,8 @@ mathInlineWith op cl = try $ do
 mathDisplayWith :: Stream s m Char => Text -> Text -> ParserT s st m Text
 mathDisplayWith op cl = try $ fmap T.pack $ do
   textStr op
-  many1Till (noneOf "\n" <|> (newline <* notFollowedBy' blankline)) (try $ textStr cl)
+  many1Till (satisfy (/= '\n') <|> (newline <* notFollowedBy' blankline))
+            (try $ textStr cl)
 
 mathDisplay :: (HasReaderOptions st, Stream s m Char)
             => ParserT s st m Text
@@ -795,7 +821,11 @@ exampleNum :: Stream s m Char
            => ParserT s ParserState m (ListNumberStyle, Int)
 exampleNum = do
   char '@'
-  lab <- T.pack <$> many (alphaNum <|> satisfy (\c -> c == '_' || c == '-'))
+  lab <- mconcat . map T.pack <$>
+                    many (many1 alphaNum <|>
+                          try (do c <- char '_' <|> char '-'
+                                  cs <- many1 alphaNum
+                                  return (c:cs)))
   st <- getState
   let num = stateNextExample st
   let newlabels = if T.null lab
@@ -814,13 +844,13 @@ defaultNum = do
 -- | Parses a lowercase letter and returns (LowerAlpha, number).
 lowerAlpha :: Stream s m Char => ParserT s st m (ListNumberStyle, Int)
 lowerAlpha = do
-  ch <- oneOf ['a'..'z']
+  ch <- satisfy isAsciiLower
   return (LowerAlpha, ord ch - ord 'a' + 1)
 
 -- | Parses an uppercase letter and returns (UpperAlpha, number).
 upperAlpha :: Stream s m Char => ParserT s st m (ListNumberStyle, Int)
 upperAlpha = do
-  ch <- oneOf ['A'..'Z']
+  ch <- satisfy isAsciiUpper
   return (UpperAlpha, ord ch - ord 'A' + 1)
 
 -- | Parses a roman numeral i or I
@@ -925,9 +955,16 @@ tableWith :: (Stream s m Char, HasReaderOptions st, Monad mf)
 tableWith headerParser rowParser lineParser footerParser = try $ do
   (aligns, widths, heads, rows) <- tableWith' headerParser rowParser
                                                 lineParser footerParser
-  return $ B.table mempty (zip aligns widths) <$> heads <*> rows
+  let th = TableHead nullAttr <$> heads
+      tb = (:[]) . TableBody nullAttr 0 [] <$> rows
+      tf = pure $ TableFoot nullAttr []
+  return $ B.table B.emptyCaption (zip aligns (map fromWidth widths)) <$> th <*> tb <*> tf
+  where
+    fromWidth n
+      | n > 0     = ColWidth n
+      | otherwise = ColWidthDefault
 
-type TableComponents mf = ([Alignment], [Double], mf [Blocks], mf [[Blocks]])
+type TableComponents mf = ([Alignment], [Double], mf [Row], mf [Row])
 
 tableWith' :: (Stream s m Char, HasReaderOptions st, Monad mf)
            => ParserT s st m (mf [Blocks], [Alignment], [Int])
@@ -943,7 +980,9 @@ tableWith' headerParser rowParser lineParser footerParser = try $ do
     let widths = if null indices
                     then replicate (length aligns) 0.0
                     else widthsFromIndices numColumns indices
-    return (aligns, widths, heads, lines')
+    let toRow =  Row nullAttr . map B.simpleCell
+        toHeaderRow l = [toRow l | not (null l)]
+    return (aligns, widths, toHeaderRow <$> heads, map toRow <$> lines')
 
 -- Calculate relative widths of table columns, based on indices
 widthsFromIndices :: Int      -- Number of columns on terminal
@@ -1030,24 +1069,24 @@ gridTableHeader :: (Stream s m Char, Monad mf, IsString s, HasLastStrPosition st
                 => Bool -- ^ Headerless table
                 -> ParserT s st m (mf Blocks)
                 -> ParserT s st m (mf [Blocks], [Alignment], [Int])
-gridTableHeader headless blocks = try $ do
+gridTableHeader True _ = do
   optional blanklines
   dashes <- gridDashedLines '-'
-  rawContent  <- if headless
-                    then return $ repeat ""
-                    else many1
-                         (notFollowedBy (gridTableSep '=') >> char '|' >>
+  let aligns = map snd dashes
+  let lines'   = map (snd . fst) dashes
+  let indices  = scanl (+) 0 lines'
+  return (return [], aligns, indices)
+gridTableHeader False blocks = try $ do
+  optional blanklines
+  dashes <- gridDashedLines '-'
+  rawContent  <- many1 (notFollowedBy (gridTableSep '=') >> char '|' >>
                            T.pack <$> many1Till anyChar newline)
-  underDashes <- if headless
-                    then return dashes
-                    else gridDashedLines '='
+  underDashes <- gridDashedLines '='
   guard $ length dashes == length underDashes
   let lines'   = map (snd . fst) underDashes
   let indices  = scanl (+) 0 lines'
   let aligns   = map snd underDashes
-  let rawHeads = if headless
-                    then replicate (length underDashes) ""
-                    else map (T.unlines . map trim) $ transpose
+  let rawHeads = map (T.unlines . map trim) $ transpose
                        $ map (gridTableSplitLine indices) rawContent
   heads <- sequence <$> mapM (parseFromString' blocks . trim) rawHeads
   return (heads, aligns, indices)
@@ -1083,8 +1122,8 @@ removeOneLeadingSpace xs =
            Just (c, _) -> c == ' '
 
 -- | Parse footer for a grid table.
-gridTableFooter :: Stream s m Char => ParserT s st m Text
-gridTableFooter = blanklines
+gridTableFooter :: Stream s m Char => ParserT s st m ()
+gridTableFooter = optional blanklines
 
 ---
 
@@ -1109,7 +1148,7 @@ testStringWith :: Show a
                => ParserT Text ParserState Identity a
                -> Text
                -> IO ()
-testStringWith parser str = UTF8.putStrLn $ show $
+testStringWith parser str = UTF8.putStrLn $ tshow $
                             readWith parser defaultParserState str
 
 -- | Parsing options.
@@ -1127,6 +1166,8 @@ data ParserState = ParserState
       stateNotes             :: NoteTable,     -- ^ List of notes (raw bodies)
       stateNotes'            :: NoteTable',    -- ^ List of notes (parsed bodies)
       stateNoteRefs          :: Set.Set Text, -- ^ List of note references used
+      stateInNote            :: Bool,          -- ^ True if parsing note contents
+      stateNoteNumber        :: Int,           -- ^ Last note number for citations
       stateMeta              :: Meta,          -- ^ Document metadata
       stateMeta'             :: F Meta,        -- ^ Document metadata
       stateCitations         :: M.Map Text Text, -- ^ RST-style citations
@@ -1161,7 +1202,7 @@ class HasReaderOptions st where
   extractReaderOptions :: st -> ReaderOptions
   getOption            :: (Stream s m t) => (ReaderOptions -> b) -> ParserT s st m b
   -- default
-  getOption  f         = (f . extractReaderOptions) <$> getState
+  getOption  f         = f . extractReaderOptions <$> getState
 
 instance HasReaderOptions ParserState where
   extractReaderOptions = stateOptions
@@ -1238,6 +1279,8 @@ defaultParserState =
                   stateNotes           = [],
                   stateNotes'          = M.empty,
                   stateNoteRefs        = Set.empty,
+                  stateInNote          = False,
+                  stateNoteNumber      = 0,
                   stateMeta            = nullMeta,
                   stateMeta'           = return nullMeta,
                   stateCitations       = M.empty,
@@ -1483,10 +1526,8 @@ extractIdClass :: Attr -> Attr
 extractIdClass (ident, cls, kvs) = (ident', cls', kvs')
   where
     ident' = fromMaybe ident (lookup "id" kvs)
-    cls'   = case lookup "class" kvs of
-               Just cl -> T.words cl
-               Nothing -> cls
-    kvs'  = filter (\(k,_) -> k /= "id" || k /= "class") kvs
+    cls'   = maybe cls T.words $ lookup "class" kvs
+    kvs'   = filter (\(k,_) -> k /= "id" || k /= "class") kvs
 
 insertIncludedFile' :: (PandocMonad m, HasIncludeFiles st)
                     => ParserT a st m (mf Blocks)

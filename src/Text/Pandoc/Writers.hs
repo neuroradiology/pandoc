@@ -4,7 +4,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {- |
    Module      : Text.Pandoc
-   Copyright   : Copyright (C) 2006-2020 John MacFarlane
+   Copyright   : Copyright (C) 2006-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -21,9 +21,12 @@ module Text.Pandoc.Writers
     , writeAsciiDoc
     , writeAsciiDoctor
     , writeBeamer
+    , writeBibTeX
+    , writeBibLaTeX
     , writeCommonMark
     , writeConTeXt
     , writeCustom
+    , writeCslJson
     , writeDZSlides
     , writeDocbook4
     , writeDocbook5
@@ -84,8 +87,10 @@ import Text.Pandoc.Options
 import qualified Text.Pandoc.UTF8 as UTF8
 import Text.Pandoc.Error
 import Text.Pandoc.Writers.AsciiDoc
+import Text.Pandoc.Writers.BibTeX
 import Text.Pandoc.Writers.CommonMark
 import Text.Pandoc.Writers.ConTeXt
+import Text.Pandoc.Writers.CslJson
 import Text.Pandoc.Writers.Custom
 import Text.Pandoc.Writers.Docbook
 import Text.Pandoc.Writers.Docx
@@ -178,9 +183,13 @@ writers = [
   ,("asciidoctor"  , TextWriter writeAsciiDoctor)
   ,("haddock"      , TextWriter writeHaddock)
   ,("commonmark"   , TextWriter writeCommonMark)
+  ,("commonmark_x" , TextWriter writeCommonMark)
   ,("gfm"          , TextWriter writeCommonMark)
   ,("tei"          , TextWriter writeTEI)
   ,("muse"         , TextWriter writeMuse)
+  ,("csljson"      , TextWriter writeCslJson)
+  ,("bibtex"       , TextWriter writeBibTeX)
+  ,("biblatex"     , TextWriter writeBibLaTeX)
   ]
 
 -- | Retrieve writer, extensions based on formatSpec (format+extensions).

@@ -4,8 +4,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {- |
 Module      : Text.Pandoc.Lua.Walk
-Copyright   : © 2012–2020 John MacFarlane,
-              © 2017-2020 Albert Krewinkel
+Copyright   : © 2012-2021 John MacFarlane,
+              © 2017-2021 Albert Krewinkel
 License     : GNU GPL, version 2 or above
 Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
 Stability   : alpha
@@ -55,6 +55,30 @@ instance Walkable (SingletonsList Inline) Block where
   walkM = walkBlockM
   query = queryBlock
 
+instance Walkable (SingletonsList Inline) Row where
+  walkM = walkRowM
+  query = queryRow
+
+instance Walkable (SingletonsList Inline) TableHead where
+  walkM = walkTableHeadM
+  query = queryTableHead
+
+instance Walkable (SingletonsList Inline) TableBody where
+  walkM = walkTableBodyM
+  query = queryTableBody
+
+instance Walkable (SingletonsList Inline) TableFoot where
+  walkM = walkTableFootM
+  query = queryTableFoot
+
+instance Walkable (SingletonsList Inline) Caption where
+  walkM = walkCaptionM
+  query = queryCaption
+
+instance Walkable (SingletonsList Inline) Cell where
+  walkM = walkCellM
+  query = queryCell
+
 instance Walkable (SingletonsList Inline) MetaValue where
   walkM = walkMetaValueM
   query = queryMetaValue
@@ -85,6 +109,30 @@ instance Walkable (SingletonsList Block) Inline where
 instance Walkable (SingletonsList Block) Block where
   walkM = walkBlockM
   query = queryBlock
+
+instance Walkable (SingletonsList Block) Row where
+  walkM = walkRowM
+  query = queryRow
+
+instance Walkable (SingletonsList Block) TableHead where
+  walkM = walkTableHeadM
+  query = queryTableHead
+
+instance Walkable (SingletonsList Block) TableBody where
+  walkM = walkTableBodyM
+  query = queryTableBody
+
+instance Walkable (SingletonsList Block) TableFoot where
+  walkM = walkTableFootM
+  query = queryTableFoot
+
+instance Walkable (SingletonsList Block) Caption where
+  walkM = walkCaptionM
+  query = queryCaption
+
+instance Walkable (SingletonsList Block) Cell where
+  walkM = walkCellM
+  query = queryCell
 
 instance Walkable (SingletonsList Block) MetaValue where
   walkM = walkMetaValueM

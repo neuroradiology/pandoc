@@ -1,9 +1,10 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# LANGUAGE BangPatterns         #-}
 {-# LANGUAGE LambdaCase           #-}
 {- |
    Module      : Text.Pandoc.Lua.Marshaling.AST
-   Copyright   : © 2012-2020 John MacFarlane
-                 © 2017-2020 Albert Krewinkel
+   Copyright   : © 2012-2021 John MacFarlane
+                 © 2017-2021 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -17,11 +18,14 @@ module Text.Pandoc.Lua.Marshaling.AST
   ) where
 
 import Control.Applicative ((<|>))
+import Control.Monad ((<$!>))
 import Foreign.Lua (Lua, Peekable, Pushable, StackIndex)
 import Text.Pandoc.Definition
+import Text.Pandoc.Error (PandocError)
 import Text.Pandoc.Lua.Util (defineHowTo, pushViaConstructor)
 import Text.Pandoc.Lua.Marshaling.CommonState ()
 
+import qualified Control.Monad.Catch as Catch
 import qualified Foreign.Lua as Lua
 import qualified Text.Pandoc.Lua.Util as LuaUtil
 
@@ -30,17 +34,16 @@ instance Pushable Pandoc where
     pushViaConstructor "Pandoc" blocks meta
 
 instance Peekable Pandoc where
-  peek idx = defineHowTo "get Pandoc value" $ do
-    blocks <- LuaUtil.rawField idx "blocks"
-    meta   <- LuaUtil.rawField idx "meta"
-    return $ Pandoc meta blocks
+  peek idx = defineHowTo "get Pandoc value" $! Pandoc
+    <$!> LuaUtil.rawField idx "meta"
+    <*>  LuaUtil.rawField idx "blocks"
 
 instance Pushable Meta where
   push (Meta mmap) =
     pushViaConstructor "Meta" mmap
 instance Peekable Meta where
-  peek idx = defineHowTo "get Meta value" $
-    Meta <$> Lua.peek idx
+  peek idx = defineHowTo "get Meta value" $!
+    Meta <$!> Lua.peek idx
 
 instance Pushable MetaValue where
   push = pushMetaValue
@@ -66,14 +69,13 @@ instance Pushable Citation where
     pushViaConstructor "Citation" cid mode prefix suffix noteNum hash
 
 instance Peekable Citation where
-  peek idx = do
-    id' <- LuaUtil.rawField idx "id"
-    prefix <- LuaUtil.rawField idx "prefix"
-    suffix <- LuaUtil.rawField idx "suffix"
-    mode <- LuaUtil.rawField idx "mode"
-    num <- LuaUtil.rawField idx "note_num"
-    hash <- LuaUtil.rawField idx "hash"
-    return $ Citation id' prefix suffix mode num hash
+  peek idx = Citation
+    <$!> LuaUtil.rawField idx "id"
+    <*> LuaUtil.rawField idx "prefix"
+    <*> LuaUtil.rawField idx "suffix"
+    <*> LuaUtil.rawField idx "mode"
+    <*> LuaUtil.rawField idx "note_num"
+    <*> LuaUtil.rawField idx "hash"
 
 instance Pushable Alignment where
   push = Lua.push . show
@@ -88,7 +90,7 @@ instance Peekable CitationMode where
 instance Pushable Format where
   push (Format f) = Lua.push f
 instance Peekable Format where
-  peek idx = Format <$> Lua.peek idx
+  peek idx = Format <$!> Lua.peek idx
 
 instance Pushable ListNumberDelim where
   push = Lua.push . show
@@ -128,29 +130,29 @@ peekMetaValue idx = defineHowTo "get MetaValue" $ do
       elementContent = Lua.peek idx
   luatype <- Lua.ltype idx
   case luatype of
-    Lua.TypeBoolean -> MetaBool <$> Lua.peek idx
-    Lua.TypeString  -> MetaString <$> Lua.peek idx
+    Lua.TypeBoolean -> MetaBool <$!> Lua.peek idx
+    Lua.TypeString  -> MetaString <$!> Lua.peek idx
     Lua.TypeTable   -> do
-      tag <- Lua.try $ LuaUtil.getTag idx
+      tag <- try $ LuaUtil.getTag idx
       case tag of
-        Right "MetaBlocks"  -> MetaBlocks  <$> elementContent
-        Right "MetaBool"    -> MetaBool    <$> elementContent
-        Right "MetaMap"     -> MetaMap     <$> elementContent
-        Right "MetaInlines" -> MetaInlines <$> elementContent
-        Right "MetaList"    -> MetaList    <$> elementContent
-        Right "MetaString"  -> MetaString  <$> elementContent
-        Right t             -> Lua.throwException ("Unknown meta tag: " <> t)
+        Right "MetaBlocks"  -> MetaBlocks  <$!> elementContent
+        Right "MetaBool"    -> MetaBool    <$!> elementContent
+        Right "MetaMap"     -> MetaMap     <$!> elementContent
+        Right "MetaInlines" -> MetaInlines <$!> elementContent
+        Right "MetaList"    -> MetaList    <$!> elementContent
+        Right "MetaString"  -> MetaString  <$!> elementContent
+        Right t             -> Lua.throwMessage ("Unknown meta tag: " <> t)
         Left _ -> do
           -- no meta value tag given, try to guess.
           len <- Lua.rawlen idx
           if len <= 0
-            then MetaMap <$> Lua.peek idx
-            else  (MetaInlines <$> Lua.peek idx)
-                  <|> (MetaBlocks <$> Lua.peek idx)
-                  <|> (MetaList <$> Lua.peek idx)
-    _        -> Lua.throwException "could not get meta value"
+            then MetaMap <$!> Lua.peek idx
+            else  (MetaInlines <$!> Lua.peek idx)
+                  <|> (MetaBlocks <$!> Lua.peek idx)
+                  <|> (MetaList <$!> Lua.peek idx)
+    _        -> Lua.throwMessage "could not get meta value"
 
--- | Push an block element to the top of the lua stack.
+-- | Push a block element to the top of the Lua stack.
 pushBlock :: Block -> Lua ()
 pushBlock = \case
   BlockQuote blcks         -> pushViaConstructor "BlockQuote" blcks
@@ -167,38 +169,128 @@ pushBlock = \case
   Para blcks               -> pushViaConstructor "Para" blcks
   Plain blcks              -> pushViaConstructor "Plain" blcks
   RawBlock f cs            -> pushViaConstructor "RawBlock" f cs
-  Table capt aligns widths headers rows ->
-    pushViaConstructor "Table" capt aligns widths headers rows
+  Table attr blkCapt specs thead tbody tfoot ->
+    pushViaConstructor "Table" blkCapt specs thead tbody tfoot attr
 
 -- | Return the value at the given index as block if possible.
 peekBlock :: StackIndex -> Lua Block
-peekBlock idx = defineHowTo "get Block value" $ do
+peekBlock idx = defineHowTo "get Block value" $! do
   tag <- LuaUtil.getTag idx
   case tag of
-      "BlockQuote"     -> BlockQuote <$> elementContent
-      "BulletList"     -> BulletList <$> elementContent
-      "CodeBlock"      -> withAttr CodeBlock <$> elementContent
-      "DefinitionList" -> DefinitionList <$> elementContent
-      "Div"            -> withAttr Div <$> elementContent
+      "BlockQuote"     -> BlockQuote <$!> elementContent
+      "BulletList"     -> BulletList <$!> elementContent
+      "CodeBlock"      -> withAttr CodeBlock <$!> elementContent
+      "DefinitionList" -> DefinitionList <$!> elementContent
+      "Div"            -> withAttr Div <$!> elementContent
       "Header"         -> (\(lvl, LuaAttr attr, lst) -> Header lvl attr lst)
-                          <$> elementContent
+                          <$!> elementContent
       "HorizontalRule" -> return HorizontalRule
-      "LineBlock"      -> LineBlock <$> elementContent
+      "LineBlock"      -> LineBlock <$!> elementContent
       "OrderedList"    -> (\(LuaListAttributes lstAttr, lst) ->
                              OrderedList lstAttr lst)
-                          <$> elementContent
+                          <$!> elementContent
       "Null"           -> return Null
-      "Para"           -> Para <$> elementContent
-      "Plain"          -> Plain <$> elementContent
-      "RawBlock"       -> uncurry RawBlock <$> elementContent
-      "Table"          -> (\(capt, aligns, widths, headers, body) ->
-                                  Table capt aligns widths headers body)
-                          <$> elementContent
-      _ -> Lua.throwException ("Unknown block type: " <> tag)
+      "Para"           -> Para <$!> elementContent
+      "Plain"          -> Plain <$!> elementContent
+      "RawBlock"       -> uncurry RawBlock <$!> elementContent
+      "Table"          -> (\(attr, capt, colSpecs, thead, tbodies, tfoot) ->
+                              Table (fromLuaAttr attr)
+                                    capt
+                                    colSpecs
+                                    thead
+                                    tbodies
+                                    tfoot)
+                          <$!> elementContent
+      _ -> Lua.throwMessage ("Unknown block type: " <> tag)
  where
    -- Get the contents of an AST element.
    elementContent :: Peekable a => Lua a
    elementContent = LuaUtil.rawField idx "c"
+
+instance Pushable Caption where
+  push = pushCaption
+
+instance Peekable Caption where
+  peek = peekCaption
+
+-- | Push Caption element
+pushCaption :: Caption -> Lua ()
+pushCaption (Caption shortCaption longCaption) = do
+  Lua.newtable
+  LuaUtil.addField "short" (Lua.Optional shortCaption)
+  LuaUtil.addField "long" longCaption
+
+-- | Peek Caption element
+peekCaption :: StackIndex -> Lua Caption
+peekCaption idx = Caption
+  <$!> (Lua.fromOptional <$!> LuaUtil.rawField idx "short")
+  <*>  LuaUtil.rawField idx "long"
+
+instance Peekable ColWidth where
+  peek idx = do
+    width <- Lua.fromOptional <$!> Lua.peek idx
+    return $! maybe ColWidthDefault ColWidth width
+
+instance Pushable ColWidth where
+  push = \case
+    (ColWidth w)    -> Lua.push w
+    ColWidthDefault -> Lua.pushnil
+
+instance Pushable Row where
+  push (Row attr cells) = Lua.push (attr, cells)
+
+instance Peekable Row where
+  peek = fmap (uncurry Row) . Lua.peek
+
+instance Pushable TableBody where
+  push (TableBody attr (RowHeadColumns rowHeadColumns) head' body) = do
+    Lua.newtable
+    LuaUtil.addField "attr" attr
+    LuaUtil.addField "row_head_columns" rowHeadColumns
+    LuaUtil.addField "head" head'
+    LuaUtil.addField "body" body
+
+instance Peekable TableBody where
+  peek idx = TableBody
+    <$!> LuaUtil.rawField idx "attr"
+    <*>  (RowHeadColumns <$!> LuaUtil.rawField idx "row_head_columns")
+    <*>  LuaUtil.rawField idx "head"
+    <*>  LuaUtil.rawField idx "body"
+
+instance Pushable TableHead where
+  push (TableHead attr rows) = Lua.push (attr, rows)
+
+instance Peekable TableHead where
+  peek = fmap (uncurry TableHead) . Lua.peek
+
+instance Pushable TableFoot where
+  push (TableFoot attr cells) = Lua.push (attr, cells)
+
+instance Peekable TableFoot where
+  peek = fmap (uncurry TableFoot) . Lua.peek
+
+instance Pushable Cell where
+  push = pushCell
+
+instance Peekable Cell where
+  peek = peekCell
+
+pushCell :: Cell -> Lua ()
+pushCell (Cell attr align (RowSpan rowSpan) (ColSpan colSpan) contents) = do
+  Lua.newtable
+  LuaUtil.addField "attr" attr
+  LuaUtil.addField "alignment" align
+  LuaUtil.addField "row_span" rowSpan
+  LuaUtil.addField "col_span" colSpan
+  LuaUtil.addField "contents" contents
+
+peekCell :: StackIndex -> Lua Cell
+peekCell idx = Cell
+  <$!> (fromLuaAttr <$!> LuaUtil.rawField idx "attr")
+  <*>  LuaUtil.rawField idx "alignment"
+  <*>  (RowSpan <$!> LuaUtil.rawField idx "row_span")
+  <*>  (ColSpan <$!> LuaUtil.rawField idx "col_span")
+  <*>  LuaUtil.rawField idx "contents"
 
 -- | Push an inline element to the top of the lua stack.
 pushInline :: Inline -> Lua ()
@@ -206,6 +298,7 @@ pushInline = \case
   Cite citations lst       -> pushViaConstructor "Cite" lst citations
   Code attr lst            -> pushViaConstructor "Code" lst (LuaAttr attr)
   Emph inlns               -> pushViaConstructor "Emph" inlns
+  Underline inlns          -> pushViaConstructor "Underline" inlns
   Image attr alt (src,tit) -> pushViaConstructor "Image" alt src tit (LuaAttr attr)
   LineBreak                -> pushViaConstructor "LineBreak"
   Link attr lst (src,tit)  -> pushViaConstructor "Link" lst src tit (LuaAttr attr)
@@ -228,32 +321,37 @@ peekInline :: StackIndex -> Lua Inline
 peekInline idx = defineHowTo "get Inline value" $ do
   tag <- LuaUtil.getTag idx
   case tag of
-    "Cite"       -> uncurry Cite <$> elementContent
-    "Code"       -> withAttr Code <$> elementContent
-    "Emph"       -> Emph <$> elementContent
-    "Image"      -> (\(LuaAttr attr, lst, tgt) -> Image attr lst tgt)
-                    <$> elementContent
-    "Link"       -> (\(LuaAttr attr, lst, tgt) -> Link attr lst tgt)
-                    <$> elementContent
+    "Cite"       -> uncurry Cite <$!> elementContent
+    "Code"       -> withAttr Code <$!> elementContent
+    "Emph"       -> Emph <$!> elementContent
+    "Underline"  -> Underline <$!> elementContent
+    "Image"      -> (\(LuaAttr !attr, !lst, !tgt) -> Image attr lst tgt)
+                    <$!> elementContent
+    "Link"       -> (\(LuaAttr !attr, !lst, !tgt) -> Link attr lst tgt)
+                    <$!> elementContent
     "LineBreak"  -> return LineBreak
-    "Note"       -> Note <$> elementContent
-    "Math"       -> uncurry Math <$> elementContent
-    "Quoted"     -> uncurry Quoted <$> elementContent
-    "RawInline"  -> uncurry RawInline <$> elementContent
-    "SmallCaps"  -> SmallCaps <$> elementContent
+    "Note"       -> Note <$!> elementContent
+    "Math"       -> uncurry Math <$!> elementContent
+    "Quoted"     -> uncurry Quoted <$!> elementContent
+    "RawInline"  -> uncurry RawInline <$!> elementContent
+    "SmallCaps"  -> SmallCaps <$!> elementContent
     "SoftBreak"  -> return SoftBreak
     "Space"      -> return Space
-    "Span"       -> withAttr Span <$> elementContent
-    "Str"        -> Str <$> elementContent
-    "Strikeout"  -> Strikeout <$> elementContent
-    "Strong"     -> Strong <$> elementContent
-    "Subscript"  -> Subscript <$> elementContent
-    "Superscript"-> Superscript <$> elementContent
-    _ -> Lua.throwException ("Unknown inline type: " <> tag)
+    "Span"       -> withAttr Span <$!> elementContent
+    -- strict to Lua string is copied before gc
+    "Str"        -> Str <$!> elementContent
+    "Strikeout"  -> Strikeout <$!> elementContent
+    "Strong"     -> Strong <$!> elementContent
+    "Subscript"  -> Subscript <$!> elementContent
+    "Superscript"-> Superscript <$!> elementContent
+    _ -> Lua.throwMessage ("Unknown inline type: " <> tag)
  where
    -- Get the contents of an AST element.
    elementContent :: Peekable a => Lua a
    elementContent = LuaUtil.rawField idx "c"
+
+try :: Lua a -> Lua (Either PandocError a)
+try = Catch.try
 
 withAttr :: (Attr -> a -> b) -> (LuaAttr, a) -> b
 withAttr f (attributes, x) = f (fromLuaAttr attributes) x
@@ -266,7 +364,7 @@ instance Pushable LuaAttr where
     pushViaConstructor "Attr" id' classes kv
 
 instance Peekable LuaAttr where
-  peek idx = defineHowTo "get Attr value" (LuaAttr <$> Lua.peek idx)
+  peek idx = defineHowTo "get Attr value" $! (LuaAttr <$!> Lua.peek idx)
 
 -- | Wrapper for ListAttributes
 newtype LuaListAttributes = LuaListAttributes  ListAttributes

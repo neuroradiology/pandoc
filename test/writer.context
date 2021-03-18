@@ -32,9 +32,9 @@
 
 \setupwhitespace[medium]
 
-\setuphead[chapter]            [style=\tfd,header=empty]
-\setuphead[section]            [style=\tfc]
-\setuphead[subsection]         [style=\tfb]
+\setuphead[chapter]            [style=\tfd\setupinterlinespace,header=empty]
+\setuphead[section]            [style=\tfc\setupinterlinespace]
+\setuphead[subsection]         [style=\tfb\setupinterlinespace]
 \setuphead[subsubsection]      [style=\bf]
 \setuphead[subsubsubsection]   [style=\sc]
 \setuphead[subsubsubsubsection][style=\it]
@@ -50,8 +50,6 @@
 
 \setupfloat[figure][default={here,nonumber}]
 \setupfloat[table][default={here,nonumber}]
-
-\setupthinrules[width=15em] % width of horizontal rules
 
 \setupxtable[frame=off]
 \setupxtable[head][topframe=on,bottomframe=on]

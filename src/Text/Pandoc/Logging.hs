@@ -1,9 +1,10 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric      #-}
+{-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE OverloadedStrings  #-}
 {- |
    Module      : Text.Pandoc.Logging
-   Copyright   : Copyright (C) 2006-2020 John MacFarlane
+   Copyright   : Copyright (C) 2006-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -30,10 +31,12 @@ import Data.Aeson.Encode.Pretty (Config (..), defConfig, encodePretty',
 import qualified Data.ByteString.Lazy as BL
 import Data.Data (Data, toConstr)
 import qualified Data.Text as Text
+import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Text.Pandoc.Definition
 import Text.Parsec.Pos
+import Text.Pandoc.Shared (tshow)
 
 -- | Verbosity level.
 data Verbosity = ERROR | WARNING | INFO
@@ -51,53 +54,55 @@ instance FromJSON Verbosity where
   parseJSON _      =  mzero
 
 instance FromYAML Verbosity where
-  parseYAML = withStr "Verbosity" $ \t ->
-    case t of
+  parseYAML = withStr "Verbosity" $ \case
          "ERROR"   -> return ERROR
          "WARNING" -> return WARNING
          "INFO"    -> return INFO
          _         -> mzero
 
 data LogMessage =
-    SkippedContent Text.Text SourcePos
-  | IgnoredElement Text.Text
-  | CouldNotParseYamlMetadata Text.Text SourcePos
-  | DuplicateLinkReference Text.Text SourcePos
-  | DuplicateNoteReference Text.Text SourcePos
-  | NoteDefinedButNotUsed Text.Text SourcePos
-  | DuplicateIdentifier Text.Text SourcePos
-  | ReferenceNotFound Text.Text SourcePos
-  | CircularReference Text.Text SourcePos
-  | UndefinedToggle Text.Text SourcePos
-  | ParsingUnescaped Text.Text SourcePos
-  | CouldNotLoadIncludeFile Text.Text SourcePos
-  | MacroAlreadyDefined Text.Text SourcePos
+    SkippedContent Text SourcePos
+  | IgnoredElement Text
+  | DuplicateLinkReference Text SourcePos
+  | DuplicateNoteReference Text SourcePos
+  | NoteDefinedButNotUsed Text SourcePos
+  | DuplicateIdentifier Text SourcePos
+  | ReferenceNotFound Text SourcePos
+  | CircularReference Text SourcePos
+  | UndefinedToggle Text SourcePos
+  | ParsingUnescaped Text SourcePos
+  | CouldNotLoadIncludeFile Text SourcePos
+  | MacroAlreadyDefined Text SourcePos
   | InlineNotRendered Inline
   | BlockNotRendered Block
-  | DocxParserWarning Text.Text
-  | IgnoredIOError Text.Text
-  | CouldNotFetchResource Text.Text Text.Text
-  | CouldNotDetermineImageSize Text.Text Text.Text
-  | CouldNotConvertImage Text.Text Text.Text
-  | CouldNotDetermineMimeType Text.Text
-  | CouldNotConvertTeXMath Text.Text Text.Text
-  | CouldNotParseCSS Text.Text
-  | Fetching Text.Text
-  | Extracting Text.Text
-  | NoTitleElement Text.Text
+  | DocxParserWarning Text
+  | IgnoredIOError Text
+  | CouldNotFetchResource Text Text
+  | CouldNotDetermineImageSize Text Text
+  | CouldNotConvertImage Text Text
+  | CouldNotDetermineMimeType Text
+  | CouldNotConvertTeXMath Text Text
+  | CouldNotParseCSS Text
+  | Fetching Text
+  | Extracting Text
+  | NoTitleElement Text
   | NoLangSpecified
-  | InvalidLang Text.Text
-  | CouldNotHighlight Text.Text
-  | MissingCharacter Text.Text
-  | Deprecated Text.Text Text.Text
-  | NoTranslation Text.Text
-  | CouldNotLoadTranslations Text.Text Text.Text
-  | UnusualConversion Text.Text
-  | UnexpectedXmlElement Text.Text Text.Text
-  | UnknownOrgExportOption Text.Text
-  | CouldNotDeduceFormat [Text.Text] Text.Text
+  | InvalidLang Text
+  | CouldNotHighlight Text
+  | MissingCharacter Text
+  | Deprecated Text Text
+  | NoTranslation Text
+  | CouldNotLoadTranslations Text Text
+  | UnusualConversion Text
+  | UnexpectedXmlElement Text Text
+  | UnknownOrgExportOption Text
+  | CouldNotDeduceFormat [Text] Text
   | RunningFilter FilePath
   | FilterCompleted FilePath Integer
+  | CiteprocWarning Text
+  | ATXHeadingInLHS Int Text
+  | EnvironmentVariableUndefined Text
+  | DuplicateAttribute Text Text
   deriving (Show, Eq, Data, Ord, Typeable, Generic)
 
 instance ToJSON LogMessage where
@@ -112,11 +117,6 @@ instance ToJSON LogMessage where
             "column" .= sourceColumn pos]
       IgnoredElement s ->
            ["contents" .= s]
-      CouldNotParseYamlMetadata s pos ->
-           ["message" .= s,
-            "source" .= sourceName pos,
-            "line" .= toJSON (sourceLine pos),
-            "column" .= toJSON (sourceColumn pos)]
       DuplicateLinkReference s pos ->
            ["contents" .= s,
             "source" .= sourceName pos,
@@ -227,8 +227,18 @@ instance ToJSON LogMessage where
       FilterCompleted fp ms ->
            ["path" .= Text.pack fp
            ,"milliseconds" .= Text.pack (show ms) ]
+      CiteprocWarning msg ->
+           ["message" .= msg]
+      ATXHeadingInLHS lvl contents ->
+           ["level" .= lvl
+           ,"contents" .= contents]
+      EnvironmentVariableUndefined var ->
+           ["variable" .= var ]
+      DuplicateAttribute attr val ->
+           ["attribute" .= attr
+           ,"value" .= val]
 
-showPos :: SourcePos -> Text.Text
+showPos :: SourcePos -> Text
 showPos pos = Text.pack $ sn ++ "line " ++
      show (sourceLine pos) ++ " column " ++ show (sourceColumn pos)
   where sn = if sourceName pos == "source" || sourceName pos == ""
@@ -241,16 +251,13 @@ encodeLogMessages ms =
       keyOrder [ "type", "verbosity", "contents", "message", "path",
                  "source", "line", "column" ] } ms
 
-showLogMessage :: LogMessage -> Text.Text
+showLogMessage :: LogMessage -> Text
 showLogMessage msg =
   case msg of
        SkippedContent s pos ->
          "Skipped '" <> s <> "' at " <> showPos pos
        IgnoredElement s ->
          "Ignored element " <> s
-       CouldNotParseYamlMetadata s pos ->
-         "Could not parse YAML metadata at " <> showPos pos <>
-           if Text.null s then "" else ": " <> s
        DuplicateLinkReference s pos ->
          "Duplicate link reference '" <> s <> "' at " <> showPos pos
        DuplicateNoteReference s pos ->
@@ -338,13 +345,24 @@ showLogMessage msg =
        RunningFilter fp -> "Running filter " <> Text.pack fp
        FilterCompleted fp ms -> "Completed filter " <> Text.pack fp <>
           " in " <> Text.pack (show ms) <> " ms"
+       CiteprocWarning ms -> "Citeproc: " <> ms
+       ATXHeadingInLHS lvl contents ->
+         "Rendering heading '" <> contents <> "' as a paragraph.\n" <>
+         "ATX headings cannot be used in literate Haskell, because " <>
+         "'#' is not\nallowed in column 1." <>
+         if lvl < 3
+            then " Consider using --markdown-headings=setext."
+            else ""
+       EnvironmentVariableUndefined var ->
+         "Undefined environment variable " <> var <> " in defaults file."
+       DuplicateAttribute attr val ->
+         "Ignoring duplicate attribute " <> attr <> "=" <> tshow val <> "."
 
 messageVerbosity :: LogMessage -> Verbosity
 messageVerbosity msg =
   case msg of
        SkippedContent{}              -> INFO
        IgnoredElement{}              -> INFO
-       CouldNotParseYamlMetadata{}   -> WARNING
        DuplicateLinkReference{}      -> WARNING
        DuplicateNoteReference{}      -> WARNING
        NoteDefinedButNotUsed{}       -> WARNING
@@ -383,3 +401,7 @@ messageVerbosity msg =
        CouldNotDeduceFormat{}        -> WARNING
        RunningFilter{}               -> INFO
        FilterCompleted{}             -> INFO
+       CiteprocWarning{}             -> WARNING
+       ATXHeadingInLHS{}             -> WARNING
+       EnvironmentVariableUndefined{}-> WARNING
+       DuplicateAttribute{}          -> WARNING

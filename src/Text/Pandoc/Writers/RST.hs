@@ -2,7 +2,7 @@
 {-# LANGUAGE ViewPatterns      #-}
 {- |
    Module      : Text.Pandoc.Writers.RST
-   Copyright   : Copyright (C) 2006-2020 John MacFarlane
+   Copyright   : Copyright (C) 2006-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -16,7 +16,7 @@ reStructuredText:  <http://docutils.sourceforge.net/rst.html>
 module Text.Pandoc.Writers.RST ( writeRST, flatten ) where
 import Control.Monad.State.Strict
 import Data.Char (isSpace)
-import Data.List (transpose, intersperse)
+import Data.List (transpose, intersperse, foldl')
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Data.Text (Text)
@@ -42,6 +42,7 @@ data WriterState =
               , stHasRawTeX   :: Bool
               , stOptions     :: WriterOptions
               , stTopLevel    :: Bool
+              , stImageId     :: Int
               }
 
 type RST = StateT WriterState
@@ -52,7 +53,7 @@ writeRST opts document = do
   let st = WriterState { stNotes = [], stLinks = [],
                          stImages = [], stHasMath = False,
                          stHasRawTeX = False, stOptions = opts,
-                         stTopLevel = True }
+                         stTopLevel = True, stImageId = 1 }
   evalStateT (pandocToRST document) st
 
 -- | Return RST representation of document.
@@ -142,9 +143,12 @@ pictToRST (label, (attr, src, _, mbtarget)) = do
   let (_, cls, _) = attr
       classes = case cls of
                    []               -> empty
-                   ["align-right"]  -> ":align: right"
-                   ["align-left"]   -> ":align: left"
-                   ["align-center"] -> ":align: center"
+                   ["align-top"]    -> ":align: top"
+                   ["align-middle"] -> ":align: middle"
+                   ["align-bottom"] -> ":align: bottom"
+                   ["align-center"] -> empty
+                   ["align-right"]  -> empty
+                   ["align-left"]   -> empty
                    _                -> ":class: " <> literal (T.unwords cls)
   return $ nowrap
          $ ".. |" <> label' <> "| image:: " <> literal src $$ hang 3 empty (classes $$ dims)
@@ -214,19 +218,28 @@ blockToRST (Div (ident,classes,_kvs) bs) = do
            nest 3 contents $$
            blankline
 blockToRST (Plain inlines) = inlineListToRST inlines
--- title beginning with fig: indicates that the image is a figure
-blockToRST (Para [Image attr txt (src,T.stripPrefix "fig:" -> Just tit)]) = do
-  capt <- inlineListToRST txt
+blockToRST (Para [Image attr txt (src, rawtit)]) = do
+  description <- inlineListToRST txt
   dims <- imageDimsToRST attr
-  let fig = "figure:: " <> literal src
-      alt = ":alt: " <> if T.null tit then capt else literal tit
+  -- title beginning with fig: indicates that the image is a figure
+  let (isfig, tit) = case T.stripPrefix "fig:" rawtit of
+                          Nothing   -> (False, rawtit)
+                          Just tit' -> (True, tit')
+  let fig | isfig = "figure:: " <> literal src
+          | otherwise = "image:: " <> literal src
+      alt | isfig = ":alt: " <> if T.null tit then description else literal tit
+          | null txt = empty
+          | otherwise = ":alt: " <> description
+      capt | isfig = description
+           | otherwise = empty
       (_,cls,_) = attr
       classes = case cls of
                    []               -> empty
                    ["align-right"]  -> ":align: right"
                    ["align-left"]   -> ":align: left"
                    ["align-center"] -> ":align: center"
-                   _                -> ":figclass: " <> literal (T.unwords cls)
+                   _ | isfig        -> ":figclass: " <> literal (T.unwords cls)
+                     | otherwise    -> ":class: " <> literal (T.unwords cls)
   return $ hang 3 ".. " (fig $$ alt $$ classes $$ dims $+$ capt) $$ blankline
 blockToRST (Para inlines)
   | LineBreak `elem` inlines =
@@ -284,7 +297,8 @@ blockToRST (CodeBlock (_,classes,kvs) str) = do
 blockToRST (BlockQuote blocks) = do
   contents <- blockListToRST blocks
   return $ nest 3 contents <> blankline
-blockToRST (Table caption aligns widths headers rows) = do
+blockToRST (Table _ blkCapt specs thead tbody tfoot) = do
+  let (caption, aligns, widths, headers, rows) = toLegacyTable blkCapt specs thead tbody tfoot
   caption' <- inlineListToRST caption
   let blocksToDoc opts bs = do
          oldOpts <- gets stOptions
@@ -413,6 +427,7 @@ transformInlines =  insertBS .
         hasContents :: Inline -> Bool
         hasContents (Str "")              = False
         hasContents (Emph [])             = False
+        hasContents (Underline [])        = False
         hasContents (Strong [])           = False
         hasContents (Strikeout [])        = False
         hasContents (Superscript [])      = False
@@ -472,6 +487,7 @@ transformInlines =  insertBS .
         okBeforeComplex _ = False
         isComplex :: Inline -> Bool
         isComplex (Emph _)        = True
+        isComplex (Underline _)   = True
         isComplex (Strong _)      = True
         isComplex (SmallCaps _)   = True
         isComplex (Strikeout _)   = True
@@ -493,7 +509,7 @@ flatten outer
   | null contents = [outer]
   | otherwise     = combineAll contents
   where contents = dropInlineParent outer
-        combineAll = foldl combine []
+        combineAll = foldl' combine []
 
         combine :: [Inline] -> Inline -> [Inline]
         combine f i =
@@ -503,8 +519,8 @@ flatten outer
           (Quoted _ _, _)          -> keep f i
           (_, Quoted _ _)          -> keep f i
           -- spans are not rendered using RST inlines, so we can keep them
-          (Span ("",[],[]) _, _)   -> keep f i
-          (_, Span ("",[],[]) _)   -> keep f i
+          (Span (_,_,[]) _, _)   -> keep f i
+          (_, Span (_,_,[]) _)   -> keep f i
           -- inlineToRST handles this case properly so it's safe to keep
           ( Link{}, Image{})       -> keep f i
           -- parent inlines would prevent links from being correctly
@@ -536,6 +552,7 @@ mapNested f i = setInlineChildren i (f (dropInlineParent i))
 dropInlineParent :: Inline -> [Inline]
 dropInlineParent (Link _ i _)    = i
 dropInlineParent (Emph i)        = i
+dropInlineParent (Underline i)   = i
 dropInlineParent (Strong i)      = i
 dropInlineParent (Strikeout i)   = i
 dropInlineParent (Superscript i) = i
@@ -550,6 +567,7 @@ dropInlineParent i               = [i] -- not a parent, like Str or Space
 setInlineChildren :: Inline -> [Inline] -> Inline
 setInlineChildren (Link a _ t) i    = Link a i t
 setInlineChildren (Emph _) i        = Emph i
+setInlineChildren (Underline _) i   = Underline i
 setInlineChildren (Strong _) i      = Strong i
 setInlineChildren (Strikeout _) i   = Strikeout i
 setInlineChildren (Superscript _) i = Superscript i
@@ -580,6 +598,9 @@ inlineToRST (Span (_,_,kvs) ils) = do
 inlineToRST (Emph lst) = do
   contents <- writeInlines lst
   return $ "*" <> contents <> "*"
+-- Underline is not supported, fall back to Emph
+inlineToRST (Underline lst) =
+  inlineToRST (Emph lst)
 inlineToRST (Strong lst) = do
   contents <- writeInlines lst
   return $ "**" <> contents <> "**"
@@ -686,13 +707,23 @@ inlineToRST (Note contents) = do
 registerImage :: PandocMonad m => Attr -> [Inline] -> Target -> Maybe Text -> RST m (Doc Text)
 registerImage attr alt (src,tit) mbtarget = do
   pics <- gets stImages
+  imgId <- gets stImageId
+  let getImageName = do
+        modify $ \st -> st{ stImageId = imgId + 1 }
+        return [Str ("image" <> tshow imgId)]
   txt <- case lookup alt pics of
-               Just (a,s,t,mbt) | (a,s,t,mbt) == (attr,src,tit,mbtarget)
-                 -> return alt
-               _ -> do
-                 let alt' = if null alt || alt == [Str ""]
-                               then [Str $ "image" <> tshow (length pics)]
-                               else alt
+               Just (a,s,t,mbt) ->
+                 if (a,s,t,mbt) == (attr,src,tit,mbtarget)
+                    then return alt
+                    else do
+                        alt' <- getImageName
+                        modify $ \st -> st { stImages =
+                           (alt', (attr,src,tit, mbtarget)):stImages st }
+                        return alt'
+               Nothing -> do
+                 alt' <- if null alt || alt == [Str ""]
+                            then getImageName
+                            else return alt
                  modify $ \st -> st { stImages =
                         (alt', (attr,src,tit, mbtarget)):stImages st }
                  return alt'

@@ -28,7 +28,7 @@ import Text.Pandoc.Templates (renderTemplate)
 import Text.Pandoc.Writers.Shared
 
 type Notes = [[Block]]
-data WriterState = WriterState { stNotes :: Notes }
+newtype WriterState = WriterState { stNotes :: Notes }
 instance Default WriterState
   where def = WriterState{ stNotes = [] }
 
@@ -115,7 +115,8 @@ blockToHaddock _ (CodeBlock (_,_,_) str) =
 -- Nothing in haddock corresponds to block quotes:
 blockToHaddock opts (BlockQuote blocks) =
   blockListToHaddock opts blocks
-blockToHaddock opts (Table caption aligns widths headers rows) = do
+blockToHaddock opts (Table _ blkCapt specs thead tbody tfoot) = do
+  let (caption, aligns, widths, headers, rows) = toLegacyTable blkCapt specs thead tbody tfoot
   caption' <- inlineListToHaddock opts caption
   let caption'' = if null caption
                      then empty
@@ -123,7 +124,7 @@ blockToHaddock opts (Table caption aligns widths headers rows) = do
   tbl <- gridTable opts blockListToHaddock
               (all null headers) (map (const AlignDefault) aligns)
                 widths headers rows
-  return $ prefixed "> " (tbl $$ blankline $$ caption'') $$ blankline
+  return $ (tbl $$ blankline $$ caption'') $$ blankline
 blockToHaddock opts (BulletList items) = do
   contents <- mapM (bulletListItemToHaddock opts) items
   return $ (if isTightList items then vcat else vsep) contents <> blankline
@@ -208,6 +209,9 @@ inlineToHaddock opts (Span (ident,_,_) ils) = do
 inlineToHaddock opts (Emph lst) = do
   contents <- inlineListToHaddock opts lst
   return $ "/" <> contents <> "/"
+-- Underline is not supported, treat the same as Emph
+inlineToHaddock opts (Underline lst) =
+  inlineToHaddock opts (Emph lst)
 inlineToHaddock opts (Strong lst) = do
   contents <- inlineListToHaddock opts lst
   return $ "__" <> contents <> "__"

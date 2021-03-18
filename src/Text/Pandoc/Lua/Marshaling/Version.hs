@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables  #-}
 {- |
    Module      : Text.Pandoc.Lua.Marshaling.Version
-   Copyright   : © 2019-2020 Albert Krewinkel
+   Copyright   : © 2019-2021 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -57,7 +57,7 @@ peekVersion idx = Lua.ltype idx >>= \case
     let parses = readP_to_S parseVersion versionStr
     case lastMay parses of
       Just (v, "") -> return v
-      _  -> Lua.throwException $ "could not parse as Version: " ++ versionStr
+      _  -> Lua.throwMessage $ "could not parse as Version: " ++ versionStr
 
   Lua.TypeUserdata ->
     reportValueOnFailure versionTypeName
@@ -71,7 +71,7 @@ peekVersion idx = Lua.ltype idx >>= \case
     makeVersion <$> Lua.peek idx
 
   _ ->
-    Lua.throwException "could not peek Version"
+    Lua.throwMessage "could not peek Version"
 
 instance Peekable Version where
   peek = peekVersion

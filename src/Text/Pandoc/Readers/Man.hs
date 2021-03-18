@@ -33,7 +33,7 @@ import Text.Pandoc.Shared (crFilter, mapLeft)
 import Text.Pandoc.Readers.Roff  -- TODO explicit imports
 import Text.Parsec hiding (tokenPrim)
 import qualified Text.Parsec as Parsec
-import Text.Parsec.Pos (updatePosString, initialPos)
+import Text.Parsec.Pos (updatePosString)
 import qualified Data.Foldable as Foldable
 
 data ManState = ManState { readerOptions   :: ReaderOptions
@@ -107,11 +107,12 @@ parseTable = do
       bodyRows <- mapM (mapM parseTableCell . snd) bodyRows'
       isPlainTable <- tableCellsPlain <$> getState
       let widths = if isPlainTable
-                      then repeat 0.0
-                      else repeat ((1.0 / fromIntegral (length alignments))
-                                   :: Double)
-      return $ B.table mempty (zip alignments widths)
-                  headerRow bodyRows) <|> fallback pos
+                      then repeat ColWidthDefault
+                      else repeat $ ColWidth (1.0 / fromIntegral (length alignments))
+      return $ B.table B.emptyCaption (zip alignments widths)
+                  (TableHead nullAttr $ toHeaderRow headerRow)
+                  [TableBody nullAttr 0 [] $ map toRow bodyRows]
+                  (TableFoot nullAttr [])) <|> fallback pos
     [] -> fallback pos
 
  where
@@ -160,6 +161,8 @@ parseTable = do
       'r' -> Just AlignRight
       _   -> Nothing
 
+  toRow = Row nullAttr . map simpleCell
+  toHeaderRow l = [toRow l | not (null l)]
 
 parseNewParagraph :: PandocMonad m => ManParser m Blocks
 parseNewParagraph = do
@@ -404,12 +407,14 @@ parseBlockQuote = blockQuote <$> continuation
 
 data ListType = Ordered ListAttributes
               | Bullet
+              | Definition T.Text
 
 listTypeMatches :: Maybe ListType -> ListType -> Bool
 listTypeMatches Nothing _            = True
 listTypeMatches (Just Bullet) Bullet = True
 listTypeMatches (Just (Ordered (_,x,y))) (Ordered (_,x',y'))
                                      = x == x' && y == y'
+listTypeMatches (Just (Definition _)) (Definition _) = True
 listTypeMatches (Just _) _           = False
 
 listItem :: PandocMonad m => Maybe ListType -> ManParser m (ListType, Blocks)
@@ -424,20 +429,28 @@ listItem mbListType = try $ do
                   Right (start, listtype, listdelim)
                     | cs == cs' -> Ordered (start, listtype, listdelim)
                     | otherwise -> Ordered (start, listtype, DefaultDelim)
-                  Left _        -> Bullet
+                  Left _
+                    | cs == "\183" || cs == "-" || cs == "*" || cs == "+"
+                                   -> Bullet
+                    | otherwise    -> Definition cs
       guard $ listTypeMatches mbListType lt
+      skipMany memptyLine
       inls <- option mempty parseInlines
+      skipMany memptyLine
       continuations <- mconcat <$> many continuation
       return (lt, para inls <> continuations)
     []          -> mzero
 
 parseList :: PandocMonad m => ManParser m Blocks
 parseList = try $ do
-  (lt, x) <- listItem Nothing
-  xs <- map snd <$> many (listItem (Just lt))
+  x@(lt, _) <- listItem Nothing
+  xs <- many (listItem (Just lt))
+  let toDefItem (Definition t, bs) = (B.text t, [bs])
+      toDefItem _ = mempty
   return $ case lt of
-             Bullet        -> bulletList (x:xs)
-             Ordered lattr -> orderedListWith lattr (x:xs)
+             Bullet        -> bulletList $ map snd (x:xs)
+             Ordered lattr -> orderedListWith lattr $ map snd (x:xs)
+             Definition _  -> definitionList $ map toDefItem (x:xs)
 
 continuation :: PandocMonad m => ManParser m Blocks
 continuation =
@@ -450,11 +463,15 @@ definitionListItem :: PandocMonad m
                    => ManParser m (Inlines, [Blocks])
 definitionListItem = try $ do
   mmacro "TP"  -- args specify indent level, can ignore
+  skipMany memptyLine
   term <- parseInline
+  skipMany memptyLine
   moreterms <- many $ try $ do
                  mmacro "TQ"
                  parseInline
+  skipMany memptyLine
   inls <- option mempty parseInlines
+  skipMany memptyLine
   continuations <- mconcat <$> many continuation
   return ( mconcat (intersperse B.linebreak (term:moreterms))
          , [para inls <> continuations])

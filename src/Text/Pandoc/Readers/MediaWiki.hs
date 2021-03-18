@@ -1,9 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RelaxedPolyRec    #-}
--- RelaxedPolyRec needed for inlinesBetween on GHC < 7
 {- |
    Module      : Text.Pandoc.Readers.MediaWiki
-   Copyright   : Copyright (C) 2012-2020 John MacFarlane
+   Copyright   : Copyright (C) 2012-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -114,12 +112,14 @@ newBlockTags = ["haskell","syntaxhighlight","source","gallery","references"]
 isBlockTag' :: Tag Text -> Bool
 isBlockTag' tag@(TagOpen t _) = (isBlockTag tag || t `elem` newBlockTags) &&
   t `notElem` eitherBlockOrInline
+isBlockTag' (TagClose "ref") = True -- needed so 'special' doesn't parse it
 isBlockTag' tag@(TagClose t) = (isBlockTag tag || t `elem` newBlockTags) &&
   t `notElem` eitherBlockOrInline
 isBlockTag' tag = isBlockTag tag
 
 isInlineTag' :: Tag Text -> Bool
 isInlineTag' (TagComment _) = True
+isInlineTag' (TagClose "ref") = False -- see below inlineTag
 isInlineTag' t              = not (isBlockTag' t)
 
 eitherBlockOrInline :: [Text]
@@ -221,9 +221,9 @@ table = do
   let restwidth = tableWidth - sum widths
   let zerocols = length $ filter (==0.0) widths
   let defaultwidth = if zerocols == 0 || zerocols == length widths
-                        then 0.0
-                        else restwidth / fromIntegral zerocols
-  let widths' = map (\w -> if w == 0 then defaultwidth else w) widths
+                        then ColWidthDefault
+                        else ColWidth $ restwidth / fromIntegral zerocols
+  let widths' = map (\w -> if w > 0 then ColWidth w else defaultwidth) widths
   let cellspecs = zip (map fst cellspecs') widths'
   rows' <- many $ try $ rowsep *> (map snd <$> tableRow)
   optional blanklines
@@ -232,7 +232,13 @@ table = do
   let (headers,rows) = if hasheader
                           then (hdr, rows')
                           else (replicate cols mempty, hdr:rows')
-  return $ B.table caption cellspecs headers rows
+  let toRow = Row nullAttr . map B.simpleCell
+      toHeaderRow l = [toRow l | not (null l)]
+  return $ B.table (B.simpleCaption $ B.plain caption)
+                   cellspecs
+                   (TableHead nullAttr $ toHeaderRow headers)
+                   [TableBody nullAttr 0 [] $ map toRow rows]
+                   (TableFoot nullAttr [])
 
 parseAttrs :: PandocMonad m => MWParser m [(Text,Text)]
 parseAttrs = many1 parseAttr
@@ -279,7 +285,7 @@ tableCaption = try $ do
   skipSpaces
   sym "|+"
   optional (try $ parseAttrs *> skipSpaces *> char '|' *> blanklines)
-  (trimInlines . mconcat) <$>
+  trimInlines . mconcat <$>
     many (notFollowedBy (cellsep <|> rowsep) *> inline)
 
 tableRow :: PandocMonad m => MWParser m [((Alignment, Double), Blocks)]
@@ -395,7 +401,10 @@ header = try $ do
   lev <- length <$> many1 (char '=')
   guard $ lev <= 6
   contents <- trimInlines . mconcat <$> manyTill inline (count lev $ char '=')
-  attr <- modifyIdentifier <$> registerHeader nullAttr contents
+  opts <- mwOptions <$> getState
+  attr <- (if isEnabled Ext_gfm_auto_identifiers opts
+              then id
+              else modifyIdentifier) <$> registerHeader nullAttr contents
   return $ B.headerWith attr lev contents
 
 -- See #4731:
@@ -427,7 +436,7 @@ defListItem :: PandocMonad m => MWParser m (Inlines, [Blocks])
 defListItem = try $ do
   terms <- mconcat . intersperse B.linebreak <$> many defListTerm
   -- we allow dd with no dt, or dt with no dd
-  defs  <- if B.isNull terms
+  defs  <- if null terms
               then notFollowedBy
                     (try $ skipMany1 (char ':') >> string "<math>") *>
                        many1 (listItem ':')
@@ -547,11 +556,17 @@ variable = try $ do
   contents <- manyTillChar anyChar (try $ string "}}}")
   return $ "{{{" <> contents <> "}}}"
 
+singleParaToPlain :: Blocks -> Blocks
+singleParaToPlain bs =
+  case B.toList bs of
+    [Para ils] -> B.fromList [Plain ils]
+    _ -> bs
+
 inlineTag :: PandocMonad m => MWParser m Inlines
 inlineTag = do
   (tag, _) <- lookAhead $ htmlTag isInlineTag'
   case tag of
-       TagOpen "ref" _ -> B.note . B.plain <$> inlinesInTags "ref"
+       TagOpen "ref" _ -> B.note . singleParaToPlain <$> blocksInTags "ref"
        TagOpen "nowiki" _ -> try $ do
           (_,raw) <- htmlTag (~== tag)
           if T.any (== '/') raw
@@ -671,19 +686,17 @@ url = do
 -- | Parses a list of inlines between start and end delimiters.
 inlinesBetween :: (PandocMonad m, Show b) => MWParser m a -> MWParser m b -> MWParser m Inlines
 inlinesBetween start end =
-  (trimInlines . mconcat) <$> try (start >> many1Till inner end)
-    where inner      = innerSpace <|> (notFollowedBy' (() <$ whitespace) >> inline)
-          innerSpace = try $ whitespace <* notFollowedBy' end
+  trimInlines . mconcat <$> try (start >> many1Till inline end)
 
 emph :: PandocMonad m => MWParser m Inlines
 emph = B.emph <$> nested (inlinesBetween start end)
-    where start = sym "''" >> lookAhead nonspaceChar
+    where start = sym "''"
           end   = try $ notFollowedBy' (() <$ strong) >> sym "''"
 
 strong :: PandocMonad m => MWParser m Inlines
 strong = B.strong <$> nested (inlinesBetween start end)
-    where start = sym "'''" >> lookAhead nonspaceChar
-          end   = try $ sym "'''"
+    where start = sym "'''"
+          end   = sym "'''"
 
 doubleQuotes :: PandocMonad m => MWParser m Inlines
 doubleQuotes = do

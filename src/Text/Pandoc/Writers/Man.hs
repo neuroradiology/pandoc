@@ -1,8 +1,9 @@
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ViewPatterns      #-}
 {- |
    Module      : Text.Pandoc.Writers.Man
-   Copyright   : Copyright (C) 2007-2020 John MacFarlane
+   Copyright   : Copyright (C) 2007-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -139,8 +140,9 @@ blockToMan opts (CodeBlock _ str) = return $
 blockToMan opts (BlockQuote blocks) = do
   contents <- blockListToMan opts blocks
   return $ literal ".RS" $$ contents $$ literal ".RE"
-blockToMan opts (Table caption alignments widths headers rows) =
-  let aligncode AlignLeft    = "l"
+blockToMan opts (Table _ blkCapt specs thead tbody tfoot) =
+  let (caption, alignments, widths, headers, rows) = toLegacyTable blkCapt specs thead tbody tfoot
+      aligncode AlignLeft    = "l"
       aligncode AlignRight   = "r"
       aligncode AlignCenter  = "c"
       aligncode AlignDefault = "l"
@@ -231,8 +233,7 @@ definitionListItemToMan opts (label, defs) = do
   labelText <- inlineListToMan opts $ makeCodeBold label
   contents <- if null defs
                  then return empty
-                 else liftM vcat $ forM defs $ \blocks ->
-                        case blocks of
+                 else liftM vcat $ forM defs $ \case
                           (x:xs) -> do
                             first' <- blockToMan opts $
                                       case x of
@@ -268,6 +269,9 @@ inlineListToMan opts lst = hcat <$> mapM (inlineToMan opts) lst
 inlineToMan :: PandocMonad m => WriterOptions -> Inline -> StateT WriterState m (Doc Text)
 inlineToMan opts (Span _ ils) = inlineListToMan opts ils
 inlineToMan opts (Emph lst) =
+  withFontFeature 'I' (inlineListToMan opts lst)
+-- Underline is not supported, so treat the same as Emph
+inlineToMan opts (Underline lst) =
   withFontFeature 'I' (inlineListToMan opts lst)
 inlineToMan opts (Strong lst) =
   withFontFeature 'B' (inlineListToMan opts lst)

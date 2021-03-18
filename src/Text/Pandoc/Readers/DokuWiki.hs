@@ -29,7 +29,7 @@ import Text.Pandoc.Definition
 import Text.Pandoc.Error (PandocError (PandocParsecError))
 import Text.Pandoc.Options
 import Text.Pandoc.Parsing hiding (enclosed, nested)
-import Text.Pandoc.Shared (crFilter, trim, underlineSpan, stringify, tshow)
+import Text.Pandoc.Shared (crFilter, trim, stringify, tshow)
 
 -- | Read DokuWiki from an input string and return a Pandoc document.
 readDokuWiki :: PandocMonad m
@@ -162,7 +162,7 @@ italic :: PandocMonad m => DWParser m B.Inlines
 italic = try $ B.emph <$> enclosed (string "//") nestedInlines
 
 underlined :: PandocMonad m => DWParser m B.Inlines
-underlined = try $ underlineSpan <$> enclosed (string "__") nestedInlines
+underlined = try $ B.underline <$> enclosed (string "__") nestedInlines
 
 nowiki :: PandocMonad m => DWParser m B.Inlines
 nowiki = try $ B.text <$ string "<nowiki>" <*> manyTillChar anyChar (try $ string "</nowiki>")
@@ -317,7 +317,7 @@ interwikiToUrl "wpes" page = "https://es.wikipedia.org/wiki/" <> page
 interwikiToUrl "wpfr" page = "https://fr.wikipedia.org/wiki/" <> page
 interwikiToUrl "wpjp" page = "https://jp.wikipedia.org/wiki/" <> page
 interwikiToUrl "wppl" page = "https://pl.wikipedia.org/wiki/" <> page
-interwikiToUrl _ page = "https://www.google.com/search?q=" <> page <> "&btnI=lucky"
+interwikiToUrl unknown page = unknown <> ">" <> page
 
 linkText :: PandocMonad m => DWParser m B.Inlines
 linkText = parseLink fromRaw "[[" "]]"
@@ -470,8 +470,14 @@ table = do
   let (headerRow, body) = if firstSeparator == '^'
                             then (head rows, tail rows)
                             else ([], rows)
-  let attrs = (AlignDefault, 0.0) <$ transpose rows
-  pure $ B.table mempty attrs headerRow body
+  let attrs = (AlignDefault, ColWidthDefault) <$ transpose rows
+  let toRow = Row nullAttr . map B.simpleCell
+      toHeaderRow l = [toRow l | not (null l)]
+  pure $ B.table B.emptyCaption
+                 attrs
+                 (TableHead nullAttr $ toHeaderRow headerRow)
+                 [TableBody nullAttr 0 [] $ map toRow body]
+                 (TableFoot nullAttr [])
 
 tableRows :: PandocMonad m => DWParser m [[B.Blocks]]
 tableRows = many1 tableRow

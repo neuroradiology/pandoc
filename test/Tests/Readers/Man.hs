@@ -2,7 +2,7 @@
 {- |
    Module      : Tests.Readers.Man
    Copyright   : © 2018-2019 Yan Pas <yanp.bugz@gmail.com>,
-                   2018-2020 John MacFarlane
+                   2018-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -13,7 +13,6 @@ Tests for the Man reader.
 -}
 module Tests.Readers.Man (tests) where
 
-import Prelude
 import Data.Text (Text)
 import Test.Tasty
 import Tests.Helpers
@@ -29,6 +28,9 @@ infix 4 =:
 (=:) :: ToString c
      => String -> (Text, c) -> TestTree
 (=:) = test man
+
+toRow :: [Blocks] -> Row
+toRow = Row nullAttr . map simpleCell
 
 tests :: [TestTree]
 tests = [
@@ -65,7 +67,7 @@ tests = [
   testGroup "Escapes" [
       "fonts" =:
       "aa\\fIbb\\fRcc"
-      =?>para (str "aa" <> (emph $ str "bb") <> str "cc")
+      =?>para (str "aa" <> emph (str "bb") <> str "cc")
     , "nested fonts" =:
       "\\f[BI]hi\\f[I] there\\f[R]"
       =?> para (emph (strong (text "hi") <> text " there"))
@@ -122,12 +124,21 @@ tests = [
   testGroup "Tables" [
       "t1" =:
       ".TS\nallbox;\nl l l.\na\tb\tc\nd\te\tf\n.TE"
-      =?> table mempty (replicate 3 (AlignLeft, 0.0)) [] [
-        map (plain . str ) ["a", "b", "c"],
-        map (plain . str ) ["d", "e", "f"]
-      ],
+      =?> table
+            emptyCaption
+            (replicate 3 (AlignLeft, ColWidthDefault))
+            (TableHead nullAttr [])
+            [TableBody nullAttr 0 [] $ map toRow
+              [map (plain . str ) ["a", "b", "c"],
+               map (plain . str ) ["d", "e", "f"]]]
+            (TableFoot nullAttr []),
       "longcell" =:
       ".TS\n;\nr.\nT{\na\nb\nc d\nT}\nf\n.TE"
-      =?> table mempty [(AlignRight, 0.0)] [] [[plain $ text "a b c d"], [plain $ str "f"]]
+      =?> table
+            emptyCaption
+            [(AlignRight, ColWidthDefault)]
+            (TableHead nullAttr [])
+            [TableBody nullAttr 0 [] $ map toRow [[plain $ text "a b c d"], [plain $ str "f"]]]
+            (TableFoot nullAttr [])
     ]
   ]

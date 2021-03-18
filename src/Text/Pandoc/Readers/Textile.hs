@@ -3,7 +3,7 @@
 {- |
    Module      : Text.Pandoc.Readers.Textile
    Copyright   : Copyright (C) 2010-2012 Paul Rivier
-                               2010-2020 John MacFarlane
+                               2010-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Paul Rivier <paul*rivier#demotera*com>
@@ -11,7 +11,7 @@
    Portability : portable
 
 Conversion from Textile to 'Pandoc' document, based on the spec
-available at http://redcloth.org/textile.
+available at https://www.promptworks.com/textile/.
 
 Implemented and parsed:
  - Paragraphs
@@ -38,7 +38,7 @@ module Text.Pandoc.Readers.Textile ( readTextile) where
 import Control.Monad (guard, liftM)
 import Control.Monad.Except (throwError)
 import Data.Char (digitToInt, isUpper)
-import Data.List (intersperse, transpose)
+import Data.List (intersperse, transpose, foldl')
 import Data.Text (Text)
 import qualified Data.Text as T
 import Text.HTML.TagSoup (Tag (..), fromAttrib)
@@ -52,7 +52,7 @@ import Text.Pandoc.Options
 import Text.Pandoc.Parsing
 import Text.Pandoc.Readers.HTML (htmlTag, isBlockTag, isInlineTag)
 import Text.Pandoc.Readers.LaTeX (rawLaTeXBlock, rawLaTeXInline)
-import Text.Pandoc.Shared (crFilter, trim, underlineSpan, tshow)
+import Text.Pandoc.Shared (crFilter, trim, tshow)
 
 -- | Parse a Textile text and return a Pandoc document.
 readTextile :: PandocMonad m
@@ -133,14 +133,14 @@ commentBlock = try $ do
   return mempty
 
 codeBlock :: PandocMonad m => ParserT Text ParserState m Blocks
-codeBlock = codeBlockBc <|> codeBlockPre
+codeBlock = codeBlockTextile <|> codeBlockHtml
 
-codeBlockBc :: PandocMonad m => ParserT Text ParserState m Blocks
-codeBlockBc = try $ do
-  string "bc."
+codeBlockTextile :: PandocMonad m => ParserT Text ParserState m Blocks
+codeBlockTextile = try $ do
+  string "bc." <|> string "pre."
   extended <- option False (True <$ char '.')
   char ' '
-  let starts = ["p", "table", "bq", "bc", "h1", "h2", "h3",
+  let starts = ["p", "table", "bq", "bc", "pre", "h1", "h2", "h3",
                 "h4", "h5", "h6", "pre", "###", "notextile"]
   let ender = choice $ map explicitBlockStart starts
   contents <- if extended
@@ -155,8 +155,8 @@ trimTrailingNewlines :: Text -> Text
 trimTrailingNewlines = T.dropWhileEnd (=='\n')
 
 -- | Code Blocks in Textile are between <pre> and </pre>
-codeBlockPre :: PandocMonad m => ParserT Text ParserState m Blocks
-codeBlockPre = try $ do
+codeBlockHtml :: PandocMonad m => ParserT Text ParserState m Blocks
+codeBlockHtml = try $ do
   (t@(TagOpen _ attrs),_) <- htmlTag (tagOpen (=="pre") (const True))
   result' <- T.pack <$> manyTill anyChar (htmlTag (tagClose (=="pre")))
   -- drop leading newline if any
@@ -243,7 +243,7 @@ genericListItemAtDepth :: PandocMonad m => Char -> Int -> ParserT Text ParserSta
 genericListItemAtDepth c depth = try $ do
   count depth (char c) >> attributes >> whitespace
   contents <- mconcat <$> many ((B.plain . mconcat <$> many1 inline) <|>
-                                try (newline >> codeBlockPre))
+                                try (newline >> codeBlockHtml))
   newline
   sublist <- option mempty (anyListAtDepth (depth + 1))
   return $ contents <> sublist
@@ -282,7 +282,7 @@ definitionListStart = try $ do
 -- break.
 definitionListItem :: PandocMonad m => ParserT Text ParserState m (Inlines, [Blocks])
 definitionListItem = try $ do
-  term <- (mconcat . intersperse B.linebreak) <$> many1 definitionListStart
+  term <- mconcat . intersperse B.linebreak <$> many1 definitionListStart
   def' <- string ":=" *> optional whitespace *> (multilineDef <|> inlineDef)
   return (term, def')
   where inlineDef :: PandocMonad m => ParserT Text ParserState m [Blocks]
@@ -377,10 +377,13 @@ table = try $ do
                              _ -> (mempty, rawrows)
   let nbOfCols = maximum $ map length (headers:rows)
   let aligns = map minimum $ transpose $ map (map (snd . fst)) (headers:rows)
-  return $ B.table caption
-    (zip aligns (replicate nbOfCols 0.0))
-    (map snd headers)
-    (map (map snd) rows)
+  let toRow = Row nullAttr . map B.simpleCell
+      toHeaderRow l = [toRow l | not (null l)]
+  return $ B.table (B.simpleCaption $ B.plain caption)
+    (zip aligns (replicate nbOfCols ColWidthDefault))
+    (TableHead nullAttr $ toHeaderRow $ map snd headers)
+    [TableBody nullAttr 0 [] $ map (toRow . map snd) rows]
+    (TableFoot nullAttr [])
 
 -- | Ignore markers for cols, thead, tfoot.
 ignorableRow :: PandocMonad m => ParserT Text ParserState m ()
@@ -436,7 +439,7 @@ inlineParsers = [ str
                 , link
                 , image
                 , mark
-                , (B.str . T.singleton) <$> characterReference
+                , B.str . T.singleton <$> characterReference
                 , smartPunctuation inline
                 , symbol
                 ]
@@ -448,7 +451,7 @@ inlineMarkup = choice [ simpleInline (string "??") (B.cite [])
                       , simpleInline (string "__") B.emph
                       , simpleInline (char '*') B.strong
                       , simpleInline (char '_') B.emph
-                      , simpleInline (char '+') underlineSpan
+                      , simpleInline (char '+') B.underline
                       , simpleInline (char '-' <* notFollowedBy (char '-')) B.strikeout
                       , simpleInline (char '^') B.superscript
                       , simpleInline (char '~') B.subscript
@@ -624,7 +627,7 @@ code2 = do
 
 -- | Html / CSS attributes
 attributes :: PandocMonad m => ParserT Text ParserState m Attr
-attributes = foldl (flip ($)) ("",[],[]) <$>
+attributes = foldl' (flip ($)) ("",[],[]) <$>
   try (do special <- option id specialAttribute
           attrs <- many attribute
           return (special : attrs))

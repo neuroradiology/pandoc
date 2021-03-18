@@ -2,7 +2,7 @@
 {-# LANGUAGE ViewPatterns      #-}
 {- |
    Module      : Text.Pandoc.Writers.Ms
-   Copyright   : Copyright (C) 2007-2020 John MacFarlane
+   Copyright   : Copyright (C) 2007-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -67,9 +67,7 @@ pandocToMs opts (Pandoc meta blocks) = do
   let authorsMeta = map (escapeStr opts . stringify) $ docAuthors meta
   hasHighlighting <- gets stHighlighting
   let highlightingMacros = if hasHighlighting
-                              then case writerHighlightStyle opts of
-                                        Nothing  -> mempty
-                                        Just sty -> styleToMs sty
+                              then maybe mempty styleToMs $ writerHighlightStyle opts
                               else mempty
 
   let context = defField "body" main
@@ -112,16 +110,37 @@ blockToMs :: PandocMonad m
           -> Block         -- ^ Block element
           -> MS m (Doc Text)
 blockToMs _ Null = return empty
-blockToMs opts (Div (ident,_,_) bs) = do
+blockToMs opts (Div (ident,cls,kvs) bs) = do
   let anchor = if T.null ident
                   then empty
                   else nowrap $
                          literal ".pdfhref M "
                          <> doubleQuotes (literal (toAscii ident))
-  setFirstPara
-  res <- blockListToMs opts bs
-  setFirstPara
-  return $ anchor $$ res
+  case cls of
+    _ | "csl-entry" `elem` cls ->
+       (".CSLENTRY" $$) . vcat <$> mapM (cslEntryToMs True opts) bs
+      | "csl-bib-body" `elem` cls -> do
+       res <- blockListToMs opts bs
+       return $ anchor $$
+                -- so that XP paragraphs are indented:
+                ".nr PI 3n" $$
+                -- space between entries
+                ".de CSLENTRY" $$
+                (case lookup "entry-spacing" kvs >>= safeRead of
+                   Just n | n > (0 :: Int) -> ".sp"
+                   _ -> mempty) $$
+                ".." $$
+                ".de CSLP" $$
+                (if "hanging-indent" `elem` cls
+                    then ".XP"
+                    else ".LP") $$
+                ".." $$
+                res
+    _ -> do
+       setFirstPara
+       res <- blockListToMs opts bs
+       setFirstPara
+       return $ anchor $$ res
 blockToMs opts (Plain inlines) =
   liftM vcat $ mapM (inlineListToMs' opts) $ splitSentences inlines
 blockToMs opts (Para [Image attr alt (src,_tit)])
@@ -204,7 +223,9 @@ blockToMs opts (CodeBlock attr str) = do
     literal ".IP" $$
     literal ".nf" $$
     literal "\\f[C]" $$
-    hlCode $$
+    ((case T.uncons str of
+      Just ('.',_) -> literal "\\&"
+      _            -> mempty) <> hlCode) $$
     literal "\\f[]" $$
     literal ".fi"
 blockToMs opts (LineBlock ls) = do
@@ -215,8 +236,9 @@ blockToMs opts (BlockQuote blocks) = do
   contents <- blockListToMs opts blocks
   setFirstPara
   return $ literal ".QS" $$ contents $$ literal ".QE"
-blockToMs opts (Table caption alignments widths headers rows) =
-  let aligncode AlignLeft    = "l"
+blockToMs opts (Table _ blkCapt specs thead tbody tfoot) =
+  let (caption, alignments, widths, headers, rows) = toLegacyTable blkCapt specs thead tbody tfoot
+      aligncode AlignLeft    = "l"
       aligncode AlignRight   = "r"
       aligncode AlignCenter  = "c"
       aligncode AlignDefault = "l"
@@ -241,8 +263,10 @@ blockToMs opts (Table caption alignments widths headers rows) =
                          return $ makeRow cols) rows
   setFirstPara
   return $ literal ".PP" $$ caption' $$
+           literal ".na" $$ -- we don't want justification in table cells
            literal ".TS" $$ literal "delim(@@) tab(\t);" $$ coldescriptions $$
-           colheadings' $$ vcat body $$ literal ".TE"
+           colheadings' $$ vcat body $$ literal ".TE" $$
+           literal ".ad"
 
 blockToMs opts (BulletList items) = do
   contents <- mapM (bulletListItemToMs opts) items
@@ -350,6 +374,8 @@ inlineToMs :: PandocMonad m => WriterOptions -> Inline -> MS m (Doc Text)
 inlineToMs opts (Span _ ils) = inlineListToMs opts ils
 inlineToMs opts (Emph lst) =
   withFontFeature 'I' (inlineListToMs opts lst)
+inlineToMs opts (Underline lst) =
+  inlineToMs opts (Emph lst)
 inlineToMs opts (Strong lst) =
   withFontFeature 'B' (inlineListToMs opts lst)
 inlineToMs opts (Strikeout lst) = do
@@ -437,6 +463,39 @@ inlineToMs _ (Note contents) = do
   modify $ \st -> st{ stNotes = contents : stNotes st }
   return $ literal "\\**"
 
+cslEntryToMs :: PandocMonad m
+             => Bool
+             -> WriterOptions
+             -> Block
+             -> MS m (Doc Text)
+cslEntryToMs atStart opts (Para xs) =
+  case xs of
+    (Span ("",["csl-left-margin"],[]) lils :
+      rest@(Span ("",["csl-right-inline"],[]) _ : _))
+      -> do lils' <- inlineListToMs' opts lils
+            ((cr <> literal ".IP " <>
+              doubleQuotes (nowrap lils') <>
+              literal " 5") $$)
+                <$> cslEntryToMs False opts (Para rest)
+    (Span ("",["csl-block"],[]) ils : rest)
+      -> ((cr <> literal ".LP") $$)
+                <$> cslEntryToMs False opts (Para (ils ++ rest))
+    (Span ("",["csl-left-margin"],[]) ils : rest)
+      -> ((cr <> literal ".LP") $$)
+              <$> cslEntryToMs False opts (Para (ils ++ rest))
+    (Span ("",["csl-indented"],[]) ils : rest)
+      -> ((cr <> literal ".LP") $$)
+              <$> cslEntryToMs False opts (Para (ils ++ rest))
+    _ | atStart
+         -> (".CSLP" $$) <$> cslEntryToMs False opts (Para xs)
+      | otherwise
+         -> case xs of
+           [] -> return mempty
+           (x:rest) -> (<>) <$> inlineToMs opts x
+                            <*> cslEntryToMs False opts (Para rest)
+cslEntryToMs _ opts x = blockToMs opts x
+
+
 handleNotes :: PandocMonad m => WriterOptions -> Doc Text -> MS m (Doc Text)
 handleNotes opts fallback = do
   notes <- gets stNotes
@@ -514,11 +573,11 @@ toMacro sty toktype =
 
 msFormatter :: WriterOptions -> FormatOptions -> [SourceLine] -> Doc Text
 msFormatter opts _fmtopts =
-  vcat . map fmtLine
-  where fmtLine = hcat . map fmtToken
-        fmtToken (toktype, tok) = literal "\\*" <>
-           brackets (literal (tshow toktype) <> literal " \""
-             <> literal (escapeStr opts tok) <> literal "\"")
+  literal . T.intercalate "\n" . map fmtLine
+ where
+  fmtLine = mconcat . map fmtToken
+  fmtToken (toktype, tok) =
+    "\\*[" <> tshow toktype <> " \"" <> escapeStr opts tok <> "\"]"
 
 highlightCode :: PandocMonad m => WriterOptions -> Attr -> Text -> MS m (Doc Text)
 highlightCode opts attr str =

@@ -1,8 +1,7 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {- |
    Module      : Tests.Readers.HTML
-   Copyright   : © 2006-2020 John MacFarlane
+   Copyright   : © 2006-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -13,7 +12,6 @@ Tests for the HTML reader.
 -}
 module Tests.Readers.HTML (tests) where
 
-import Prelude
 import Data.Text (Text)
 import qualified Data.Text as T
 import Test.Tasty
@@ -39,6 +37,7 @@ makeRoundTrip RawBlock{} = Para [Str "raw block was here"]
 makeRoundTrip (Div attr bs) = Div attr $ filter (not . isHeaderBlock) bs
 -- avoids round-trip failures related to makeSections
 -- e.g. with [Div ("loc",[],[("a","11"),("b_2","a b c")]) [Header 3 ("",[],[]) []]]
+makeRoundTrip Table{} = Para [Str "table block was here"]
 makeRoundTrip x           = x
 
 removeRawInlines :: Inline -> Inline
@@ -52,7 +51,7 @@ roundTrip b = d'' == d'''
         d' = rewrite d
         d'' = rewrite d'
         d''' = rewrite d''
-        rewrite = html . T.pack . (++ "\n") . T.unpack .
+        rewrite = html . (`T.snoc` '\n') .
                   purely (writeHtml5String def
                             { writerWrapText = WrapPreserve })
 

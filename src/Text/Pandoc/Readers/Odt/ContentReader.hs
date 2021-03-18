@@ -25,19 +25,20 @@ module Text.Pandoc.Readers.Odt.ContentReader
 
 import Control.Applicative hiding (liftA, liftA2, liftA3)
 import Control.Arrow
+import Control.Monad ((<=<))
 
 import qualified Data.ByteString.Lazy as B
 import Data.Foldable (fold)
-import Data.List (find, stripPrefix)
+import Data.List (find)
 import qualified Data.Map as M
 import qualified Data.Text as T
 import Data.Maybe
 import Data.Semigroup (First(..), Option(..))
 
 import Text.TeXMath (readMathML, writeTeX)
-import qualified Text.XML.Light as XML
+import qualified Text.Pandoc.XML.Light as XML
 
-import Text.Pandoc.Builder
+import Text.Pandoc.Builder hiding (underline)
 import Text.Pandoc.MediaBag (MediaBag, insertMedia)
 import Text.Pandoc.Shared
 import Text.Pandoc.Extensions (extensionsFromList, Extension(..))
@@ -220,9 +221,9 @@ uniqueIdentFrom :: AnchorPrefix -> [Anchor] -> Anchor
 uniqueIdentFrom baseIdent usedIdents =
   let  numIdent n = baseIdent <> "-" <> T.pack (show n)
   in  if baseIdent `elem` usedIdents
-        then case find (\x -> numIdent x `notElem` usedIdents) ([1..60000] :: [Int]) of
-                  Just x  -> numIdent x
-                  Nothing -> baseIdent   -- if we have more than 60,000, allow repeats
+        then maybe baseIdent numIdent
+             $ find (\x -> numIdent x `notElem` usedIdents) ([1..60000] :: [Int])
+               -- if we have more than 60,000, allow repeats
         else baseIdent
 
 -- | First argument: basis for a new "pretty" anchor if none exists yet
@@ -352,11 +353,11 @@ modifierFromStyleDiff propertyTriple  =
 
     lookupPreviousValue f = lookupPreviousStyleValue (fmap f . textProperties)
 
-    lookupPreviousValueM f = lookupPreviousStyleValue ((f =<<).textProperties)
+    lookupPreviousValueM f = lookupPreviousStyleValue (f <=< textProperties)
 
     lookupPreviousStyleValue f (ReaderState{..},_,mFamily)
       =     findBy f (extendedStylePropertyChain styleTrace styleSet)
-        <|> ( f =<< fmap (lookupDefaultStyle' styleSet) mFamily         )
+        <|> (f . lookupDefaultStyle' styleSet =<< mFamily)
 
 
 type ParaModifier = Blocks -> Blocks
@@ -556,7 +557,7 @@ read_plain_text =  fst ^&&& read_plain_text' >>% recover
                        >>?% mappend
     --
     extractText     :: XML.Content -> Fallible T.Text
-    extractText (XML.Text cData) = succeedWith (T.pack $ XML.cdData cData)
+    extractText (XML.Text cData) = succeedWith (XML.cdData cData)
     extractText         _        = failEmpty
 
 read_text_seq :: InlineMatcher
@@ -776,14 +777,14 @@ read_frame_img =
       ""   -> returnV mempty -< ()
       src' -> do
         let exts = extensionsFromList [Ext_auto_identifiers]
-        resource   <- lookupResource                          -< src'
+        resource   <- lookupResource                          -< T.unpack src'
         _          <- updateMediaWithResource                 -< resource
         w          <- findAttrText' NsSVG "width"             -< ()
         h          <- findAttrText' NsSVG "height"            -< ()
         titleNodes <- matchChildContent' [ read_frame_title ] -< ()
         alt        <- matchChildContent [] read_plain_text    -< ()
         arr (firstMatch . uncurry4 imageWith)                 -<
-          (image_attributes w h, T.pack src', inlineListToIdentifier exts (toList titleNodes), alt)
+          (image_attributes w h, src', inlineListToIdentifier exts (toList titleNodes), alt)
 
 read_frame_title :: InlineMatcher
 read_frame_title = matchingElement NsSVG "title" (matchChildContent [] read_plain_text)
@@ -803,7 +804,8 @@ read_frame_mathml =
     case fold src of
       ""   -> returnV mempty -< ()
       src' -> do
-        let path = fromMaybe src' (stripPrefix "./" src') ++ "/content.xml"
+        let path = T.unpack $
+                    fromMaybe src' (T.stripPrefix "./" src') <> "/content.xml"
         (_, mathml) <- lookupResource -< path
         case readMathML (UTF8.toText $ B.toStrict mathml) of
           Left _     -> returnV mempty -< ()
@@ -921,8 +923,8 @@ post_process (Pandoc m blocks) =
   Pandoc m (post_process' blocks)
 
 post_process' :: [Block] -> [Block]
-post_process' (Table _ a w h r : Div ("", ["caption"], _) [Para inlines] : xs) =
-  Table inlines a w h r : post_process' xs
+post_process' (Table attr _ specs th tb tf : Div ("", ["caption"], _) blks : xs)
+  = Table attr (Caption Nothing blks) specs th tb tf : post_process' xs
 post_process' bs = bs
 
 read_body :: OdtReader _x (Pandoc, MediaBag)

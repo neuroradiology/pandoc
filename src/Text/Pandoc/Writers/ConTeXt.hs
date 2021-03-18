@@ -3,7 +3,7 @@
 {-# LANGUAGE ViewPatterns        #-}
 {- |
    Module      : Text.Pandoc.Writers.ConTeXt
-   Copyright   : Copyright (C) 2007-2020 John MacFarlane
+   Copyright   : Copyright (C) 2007-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -209,7 +209,7 @@ blockToConTeXt (Div (ident,_,kvs) bs) = do
                                      <> literal lng <> "]" $$ txt $$ "\\stop"
                        Nothing  -> txt
       wrapBlank txt = blankline <> txt <> blankline
-  (wrapBlank . wrapLang . wrapDir . wrapRef) <$> blockListToConTeXt bs
+  wrapBlank . wrapLang . wrapDir . wrapRef <$> blockListToConTeXt bs
 blockToConTeXt (BulletList lst) = do
   contents <- mapM listItemToConTeXt lst
   return $ ("\\startitemize" <> if isTightList lst
@@ -255,7 +255,8 @@ blockToConTeXt (DefinitionList lst) =
 blockToConTeXt HorizontalRule = return $ "\\thinrule" <> blankline
 -- If this is ever executed, provide a default for the reference identifier.
 blockToConTeXt (Header level attr lst) = sectionHeader attr level lst
-blockToConTeXt (Table caption aligns widths heads rows) = do
+blockToConTeXt (Table _ blkCapt specs thead tbody tfoot) = do
+    let (caption, aligns, widths, heads, rows) = toLegacyTable blkCapt specs thead tbody tfoot
     opts <- gets stOptions
     let tabl = if isEnabled Ext_ntb opts
           then Ntb
@@ -331,7 +332,7 @@ alignToConTeXt align = case align of
                          AlignDefault -> empty
 
 listItemToConTeXt :: PandocMonad m => [Block] -> WM m (Doc Text)
-listItemToConTeXt list = (("\\item" $$) . nest 2) <$> blockListToConTeXt list
+listItemToConTeXt list = ("\\item" $$) . nest 2 <$> blockListToConTeXt list
 
 defListItemToConTeXt :: PandocMonad m => ([Inline], [[Block]]) -> WM m (Doc Text)
 defListItemToConTeXt (term, defs) = do
@@ -367,6 +368,9 @@ inlineToConTeXt :: PandocMonad m
 inlineToConTeXt (Emph lst) = do
   contents <- inlineListToConTeXt lst
   return $ braces $ "\\em " <> contents
+inlineToConTeXt (Underline lst) = do
+  contents <- inlineListToConTeXt lst
+  return $ "\\underbar" <> braces contents
 inlineToConTeXt (Strong lst) = do
   contents <- inlineListToConTeXt lst
   return $ braces $ "\\bf " <> contents
@@ -483,7 +487,7 @@ inlineToConTeXt (Span (_,_,kvs) ils) = do
                        Just lng -> braces ("\\language" <>
                                            brackets (literal lng) <> txt)
                        Nothing -> txt
-  (wrapLang . wrapDir) <$> inlineListToConTeXt ils
+  wrapLang . wrapDir <$> inlineListToConTeXt ils
 
 -- | Craft the section header, inserting the section reference, if supplied.
 sectionHeader :: PandocMonad m

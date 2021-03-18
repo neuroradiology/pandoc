@@ -1,7 +1,8 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {- |
    Module      : Text.Pandoc.Readers.Org.Inlines
-   Copyright   : Copyright (C) 2014-2020 Albert Krewinkel
+   Copyright   : Copyright (C) 2014-2021 Albert Krewinkel
    License     : GNU GPL, version 2 or above
 
    Maintainer  : Albert Krewinkel <tarleb+pandoc@moltkeplatz.de>
@@ -27,7 +28,6 @@ import Text.Pandoc.Class.PandocMonad (PandocMonad)
 import Text.Pandoc.Definition
 import Text.Pandoc.Options
 import Text.Pandoc.Readers.LaTeX (inlineCommand, rawLaTeXInline)
-import Text.Pandoc.Shared (underlineSpan)
 import Text.TeXMath (DisplayType (..), readTeX, writePandoc)
 import qualified Text.TeXMath.Readers.MathML.EntityMap as MathMLEntityMap
 
@@ -322,7 +322,7 @@ linkLikeOrgRefCite = try $ do
 -- from the `org-ref-cite-re` variable in `org-ref.el`.
 orgRefCiteKey :: PandocMonad m => OrgParser m Text
 orgRefCiteKey =
-  let citeKeySpecialChars = "-_:\\./," :: String
+  let citeKeySpecialChars = "-_:\\./" :: String
       isCiteKeySpecialChar c = c `elem` citeKeySpecialChars
       isCiteKeyChar c = isAlphaNum c || isCiteKeySpecialChar c
       endOfCitation = try $ do
@@ -378,7 +378,10 @@ citation = try $ do
               else rest
 
 footnote :: PandocMonad m => OrgParser m (F Inlines)
-footnote = try $ inlineNote <|> referencedNote
+footnote = try $ do
+  note <- inlineNote <|> referencedNote
+  withNote <- getExportSetting exportWithFootnotes
+  return $ if withNote then note else mempty
 
 inlineNote :: PandocMonad m => OrgParser m (F Inlines)
 inlineNote = try $ do
@@ -474,17 +477,17 @@ linkToInlinesF linkStr =
 
 internalLink :: Text -> Inlines -> F Inlines
 internalLink link title = do
-  anchorB <- (link `elem`) <$> asksF orgStateAnchorIds
-  if anchorB
+  ids <- asksF orgStateAnchorIds
+  if link `elem` ids
     then return $ B.link ("#" <> link) "" title
-    else return $ B.emph title
+    else let attr' = ("", ["spurious-link"] , [("target", link)])
+         in return $ B.spanWith attr' (B.emph title)
 
 -- | Parse an anchor like @<<anchor-id>>@ and return an empty span with
 -- @anchor-id@ set as id.  Legal anchors in org-mode are defined through
 -- @org-target-regexp@, which is fairly liberal.  Since no link is created if
 -- @anchor-id@ contains spaces, we are more restrictive in what is accepted as
 -- an anchor.
-
 anchor :: PandocMonad m => OrgParser m (F Inlines)
 anchor =  try $ do
   anchorId <- parseAnchor
@@ -498,7 +501,6 @@ anchor =  try $ do
 
 -- | Replace every char but [a-zA-Z0-9_.-:] with a hyphen '-'.  This mirrors
 -- the org function @org-export-solidify-link-text@.
-
 solidify :: Text -> Text
 solidify = T.map replaceSpecialChar
  where replaceSpecialChar c
@@ -567,10 +569,10 @@ strikeout :: PandocMonad m => OrgParser m (F Inlines)
 strikeout = fmap B.strikeout    <$> emphasisBetween '+'
 
 underline :: PandocMonad m => OrgParser m (F Inlines)
-underline = fmap underlineSpan  <$> emphasisBetween '_'
+underline = fmap B.underline    <$> emphasisBetween '_'
 
 verbatim  :: PandocMonad m => OrgParser m (F Inlines)
-verbatim  = return . B.code     <$> verbatimBetween '='
+verbatim  = return . B.codeWith ("", ["verbatim"], []) <$> verbatimBetween '='
 
 code      :: PandocMonad m => OrgParser m (F Inlines)
 code      = return . B.code     <$> verbatimBetween '~'
@@ -789,27 +791,41 @@ simpleSubOrSuperText = try $ do
 inlineLaTeX :: PandocMonad m => OrgParser m (F Inlines)
 inlineLaTeX = try $ do
   cmd <- inlineLaTeXCommand
-  ils <- (lift . lift) $ parseAsInlineLaTeX cmd
+  texOpt <- getExportSetting exportWithLatex
+  allowEntities <- getExportSetting exportWithEntities
+  ils <- parseAsInlineLaTeX cmd texOpt
   maybe mzero returnF $
-     parseAsMathMLSym cmd `mplus` parseAsMath cmd `mplus` ils
+     parseAsMathMLSym allowEntities cmd `mplus`
+     parseAsMath cmd texOpt `mplus`
+     ils
  where
-   parseAsMath :: Text -> Maybe Inlines
-   parseAsMath cs = B.fromList <$> texMathToPandoc cs
+   parseAsInlineLaTeX :: PandocMonad m
+                      => Text -> TeXExport -> OrgParser m (Maybe Inlines)
+   parseAsInlineLaTeX cs = \case
+     TeXExport -> maybeRight <$> runParserT inlineCommand state "" cs
+     TeXIgnore -> return (Just mempty)
+     TeXVerbatim -> return (Just $ B.str cs)
 
-   parseAsInlineLaTeX :: PandocMonad m => Text -> m (Maybe Inlines)
-   parseAsInlineLaTeX cs = maybeRight <$> runParserT inlineCommand state "" cs
-
-   parseAsMathMLSym :: Text -> Maybe Inlines
-   parseAsMathMLSym cs = B.str <$> MathMLEntityMap.getUnicode (clean cs)
-    -- drop initial backslash and any trailing "{}"
-    where clean = T.dropWhileEnd (`elem` ("{}" :: String)) . T.drop 1
+   parseAsMathMLSym :: Bool -> Text -> Maybe Inlines
+   parseAsMathMLSym allowEntities cs = do
+     -- drop initial backslash and any trailing "{}"
+     let clean = T.dropWhileEnd (`elem` ("{}" :: String)) . T.drop 1
+     -- If entities are disabled, then return the string as text, but
+     -- only if this *is* a MathML entity.
+     case B.str <$> MathMLEntityMap.getUnicode (clean cs) of
+       Just _ | not allowEntities -> Just $ B.str cs
+       x -> x
 
    state :: ParserState
    state = def{ stateOptions = def{ readerExtensions =
                     enableExtension Ext_raw_tex (readerExtensions def) } }
 
-   texMathToPandoc :: Text -> Maybe [Inline]
-   texMathToPandoc cs = maybeRight (readTeX cs) >>= writePandoc DisplayInline
+   parseAsMath :: Text -> TeXExport -> Maybe Inlines
+   parseAsMath cs = \case
+     TeXExport -> maybeRight (readTeX cs) >>=
+                  fmap B.fromList . writePandoc DisplayInline
+     TeXIgnore -> Just mempty
+     TeXVerbatim -> Just $ B.str cs
 
 maybeRight :: Either a b -> Maybe b
 maybeRight = either (const Nothing) Just
@@ -821,7 +837,7 @@ inlineLaTeXCommand = try $ do
   parsed <- (lift . lift) $ runParserT rawLaTeXInline st "source" rest
   case parsed of
     Right cs -> do
-      -- drop any trailing whitespace, those are not be part of the command as
+      -- drop any trailing whitespace, those are not part of the command as
       -- far as org mode is concerned.
       let cmdNoSpc = T.dropWhileEnd isSpace cs
       let len = T.length cmdNoSpc

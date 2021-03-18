@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {- |
    Module      : Text.Pandoc.Writers.RTF
-   Copyright   : Copyright (C) 2006-2020 John MacFarlane
+   Copyright   : Copyright (C) 2006-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -241,12 +241,12 @@ blockToRTF _ _ b@(RawBlock f str)
   | otherwise         = do
       report $ BlockNotRendered b
       return ""
-blockToRTF indent alignment (BulletList lst) = (spaceAtEnd . T.concat) <$>
+blockToRTF indent alignment (BulletList lst) = spaceAtEnd . T.concat <$>
   mapM (listItemToRTF alignment indent (bulletMarker indent)) lst
 blockToRTF indent alignment (OrderedList attribs lst) =
-  (spaceAtEnd . T.concat) <$>
+  spaceAtEnd . T.concat <$>
    zipWithM (listItemToRTF alignment indent) (orderedMarkers indent attribs) lst
-blockToRTF indent alignment (DefinitionList lst) = (spaceAtEnd . T.concat) <$>
+blockToRTF indent alignment (DefinitionList lst) = spaceAtEnd . T.concat <$>
   mapM (definitionListItemToRTF alignment indent) lst
 blockToRTF indent _ HorizontalRule = return $
   rtfPar indent 0 AlignCenter "\\emdash\\emdash\\emdash\\emdash\\emdash"
@@ -254,7 +254,8 @@ blockToRTF indent alignment (Header level _ lst) = do
   contents <- inlinesToRTF lst
   return $ rtfPar indent 0 alignment $
              "\\b \\fs" <> tshow (40 - (level * 4)) <> " " <> contents
-blockToRTF indent alignment (Table caption aligns sizes headers rows) = do
+blockToRTF indent alignment (Table _ blkCapt specs thead tbody tfoot) = do
+  let (caption, aligns, sizes, headers, rows) = toLegacyTable blkCapt specs thead tbody tfoot
   caption' <- inlinesToRTF caption
   header' <- if all null headers
                 then return ""
@@ -350,6 +351,9 @@ inlineToRTF (Span _ lst) = inlinesToRTF lst
 inlineToRTF (Emph lst) = do
   contents <- inlinesToRTF lst
   return $ "{\\i " <> contents <> "}"
+inlineToRTF (Underline lst) = do
+  contents <- inlinesToRTF lst
+  return $ "{\\ul " <> contents <> "}"
 inlineToRTF (Strong lst) = do
   contents <- inlinesToRTF lst
   return $ "{\\b " <> contents <> "}"

@@ -2,7 +2,7 @@
 {-# LANGUAGE PatternGuards     #-}
 {- |
    Module      : Text.Pandoc.Writers.Docbook
-   Copyright   : Copyright (C) 2006-2020 John MacFarlane
+   Copyright   : Copyright (C) 2006-2021 John MacFarlane
    License     : GNU GPL, version 2 or above
 
    Maintainer  : John MacFarlane <jgm@berkeley.edu>
@@ -194,8 +194,9 @@ blockToTEI _ HorizontalRule = return $
 -- | TEI Tables
 -- TEI Simple's tables are composed of cells and rows; other
 -- table info in the AST is here lossily discard.
-blockToTEI opts (Table _ _ _ headers rows) = do
-  headers' <- tableHeadersToTEI opts headers
+blockToTEI opts (Table _ blkCapt specs thead tbody tfoot) = do
+  let (_, _, _, headers, rows) = toLegacyTable blkCapt specs thead tbody tfoot
+  headers' <- if null headers then pure mempty else tableHeadersToTEI opts headers
   rows' <- mapM (tableRowToTEI opts) rows
   return $ inTags True "table" [] $ headers' $$ vcat rows'
 
@@ -204,14 +205,14 @@ tableRowToTEI :: PandocMonad m
               -> [[Block]]
               -> m (Doc Text)
 tableRowToTEI opts cols =
-  (inTagsIndented "row" . vcat) <$> mapM (tableItemToTEI opts) cols
+  inTagsIndented "row" . vcat <$> mapM (tableItemToTEI opts) cols
 
 tableHeadersToTEI :: PandocMonad m
                   => WriterOptions
                   -> [[Block]]
                   -> m (Doc Text)
 tableHeadersToTEI opts cols =
-  (inTags True "row" [("role","label")] . vcat) <$>
+  inTags True "row" [("role","label")] . vcat <$>
     mapM (tableItemToTEI opts) cols
 
 tableItemToTEI :: PandocMonad m
@@ -219,7 +220,7 @@ tableItemToTEI :: PandocMonad m
                -> [Block]
                -> m (Doc Text)
 tableItemToTEI opts item =
-  (inTags False "cell" [] . vcat) <$> mapM (blockToTEI opts) item
+  inTags False "cell" [] . vcat <$> mapM (blockToTEI opts) item
 
 -- | Convert a list of inline elements to TEI.
 inlinesToTEI :: PandocMonad m => WriterOptions -> [Inline] -> m (Doc Text)
@@ -230,6 +231,8 @@ inlineToTEI :: PandocMonad m => WriterOptions -> Inline -> m (Doc Text)
 inlineToTEI _ (Str str) = return $ literal $ escapeStringForXML str
 inlineToTEI opts (Emph lst) =
   inTags False "hi" [("rendition","simple:italic")] <$> inlinesToTEI opts lst
+inlineToTEI opts (Underline lst) =
+  inTags False "hi" [("rendition","simple:underline")] <$> inlinesToTEI opts lst
 inlineToTEI opts (Strong lst) =
   inTags False "hi" [("rendition", "simple:bold")] <$> inlinesToTEI opts lst
 inlineToTEI opts (Strikeout lst) =
